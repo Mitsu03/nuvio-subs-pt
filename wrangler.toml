@@ -29,9 +29,9 @@ MAX_TRANSLATE_CALLS = "40"
 # Lotes traduzidos ao mesmo tempo. Com 6 um episodio levava 41s, o que passava
 # da janela do prewarm; com 12 fica a cerca de metade.
 TRANSLATE_CONCURRENCY = "12"
-# Nao traduzir anime automaticamente: tem legendas PT em abundancia e a quota
-# faz falta nas turcas. "0" desliga o bloqueio e traduz tudo.
-SKIP_ANIME_TRANSLATION = "1"
+# Anime: "exclude" (nada), "no-translation" (so legendas reais) ou "include".
+# Este addon e para filmes e series; anime tem addons dedicados.
+ANIME_POLICY = "exclude"
 
 # Aquece a traducao em background assim que o Nuvio pede a lista de legendas.
 PREWARM = "1"

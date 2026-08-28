@@ -110,6 +110,20 @@ async function handleSubtitles(request, env, ctx, type, rawId) {
     if (!video.imdbId) return json({ subtitles: [] });
   }
 
+  // Este addon e para filmes e series. O anime tem legendas portuguesas em
+  // abundancia e addons dedicados, e as entradas daqui so acrescentavam ruido
+  // a lista. `ANIME_POLICY` permite voltar atras sem mexer no codigo:
+  //   exclude (omissao) — nada para anime
+  //   no-translation    — serve as legendas reais, mas nao traduz
+  //   include           — trata anime como tudo o resto
+  const animePolicy = env.ANIME_POLICY || 'exclude';
+  const anime = animePolicy === 'include' ? false : await isAnime(video, env).catch(() => false);
+
+  // Sai antes de interrogar as fontes: nao vale a pena gastar os pedidos.
+  if (anime && animePolicy === 'exclude') return json({ subtitles: [] });
+
+  const skipTranslation = anime;
+
   const ptLangs = orderedPtLangs(env);
   const sourceLangs = translateFromLangs(env);
   const canTranslate = resolveEngineName(env) !== null;
@@ -139,12 +153,6 @@ async function handleSubtitles(request, env, ctx, type, rawId) {
   // portuguesa: a legenda humana pode estar dessincronizada ou vir marcada como
   // pt-PT sendo pt-BR, e nesses casos o utilizador quer poder trocar. Fica em
   // primeiro quando nao ha alternativa, e no fim quando ha.
-  // O anime tem legendas portuguesas em abundancia; a quota de traducao faz
-  // falta nas turcas, que quase nunca as tem. As legendas reais de anime
-  // continuam a ser servidas — o que se trava aqui e' so a traducao.
-  const skipTranslation =
-    env.SKIP_ANIME_TRANSLATION !== '0' && (await isAnime(video, env).catch(() => false));
-
   if (canTranslate && !skipTranslation) {
     // Reservas da mesma lingua de origem e, a seguir, das outras linguas
     // aceites: para traduzir serve qualquer uma, o que conta e ter texto.

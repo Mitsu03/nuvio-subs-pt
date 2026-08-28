@@ -63,6 +63,7 @@ correção só chega aos utilizadores quando a cache expirar.
 - **Limpa a publicidade** que as fontes colam na primeira e na última deixa.
 - **Ordena por episódio.** Um nome de ficheiro que bata certo com `S01E05` pesa
   mais do que um ficheiro popular mas genérico.
+- **Ignora anime.** É um addon para filmes e séries; o anime tem legendas PT em abundância e addons dedicados, e as entradas daqui só acrescentavam ruído. Reversível em `ANIME_POLICY`.
 - **Assina os URLs** que serve, para o endpoint não poder ser usado como proxy
   aberto para hosts arbitrários.
 
@@ -111,6 +112,7 @@ Em `wrangler.toml`, secção `[vars]`:
 | `TRANSLATE_CONCURRENCY` | `12` | Lotes traduzidos em paralelo. Baixar isto quebra o `PREWARM`. |
 | `PREWARM` | `1` | Traduz em segundo plano assim que o Nuvio pede a lista. |
 | `CACHE_DAYS` | `30` | Validade da cache KV. |
+| `ANIME_POLICY` | `exclude` | `exclude` (nada para anime), `no-translation` (só legendas reais) ou `include`. |
 
 Segredos (`npx wrangler secret put NOME`):
 
