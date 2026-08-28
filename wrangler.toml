@@ -1,0 +1,47 @@
+name = "nuvio-subs-pt"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+# Workers AI e o tradutor por defeito: nao precisa de chave nenhuma.
+[ai]
+binding = "AI"
+
+# Cache das legendas ja traduzidas / descarregadas.
+# Cria com:  npx wrangler kv namespace create SUBS
+# e cola o id devolvido aqui.
+[[kv_namespaces]]
+binding = "SUBS"
+id = "7c87659f495d45109af05323854f169e"
+
+[vars]
+# Idioma preferido apresentado primeiro: "pt" (Portugal) ou "pt-BR" (Brasil).
+PREFERRED_PT = "pt"
+# Motor de traducao: workersai | workersai-m2m | deepl | google | libre | none
+TRANSLATE_PROVIDER = "workersai"
+# Modelos para TRANSLATE_PROVIDER = workersai. Aceita lista separada por
+# virgulas; ha sempre modelos de reserva atras do que aqui esta.
+WORKERSAI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+# Linguas de partida aceites para traducao, por ordem de preferencia.
+TRANSLATE_FROM = "en,tr"
+# Numero maximo de chamadas ao tradutor por pedido (o plano Free da Cloudflare
+# limita a 50 subrequests por pedido; deixa margem para as fontes).
+MAX_TRANSLATE_CALLS = "40"
+# Lotes traduzidos ao mesmo tempo. Com 6 um episodio levava 41s, o que passava
+# da janela do prewarm; com 12 fica a cerca de metade.
+TRANSLATE_CONCURRENCY = "12"
+# Nao traduzir anime automaticamente: tem legendas PT em abundancia e a quota
+# faz falta nas turcas. "0" desliga o bloqueio e traduz tudo.
+SKIP_ANIME_TRANSLATION = "1"
+
+# Aquece a traducao em background assim que o Nuvio pede a lista de legendas.
+PREWARM = "1"
+# Dias de validade da cache KV.
+CACHE_DAYS = "30"
+
+# Segredos (nao os metas aqui — usa `npx wrangler secret put NOME`):
+#   SIGNING_KEY     obrigatorio  chave para assinar os URLs /sub/*.srt
+#   DEEPL_API_KEY   opcional     so se TRANSLATE_PROVIDER = deepl
+#   LIBRE_URL       opcional     endpoint LibreTranslate
+#   LIBRE_API_KEY   opcional
+#   SUBDL_API_KEY   opcional     adiciona o SubDL como segunda fonte
+#   TMDB_API_KEY    opcional     resolve ids tmdb: para IMDb

@@ -1,0 +1,7 @@
+# Copia para .dev.vars (fica fora do git) para correr `npm run dev` localmente.
+SIGNING_KEY=troca-isto-por-uma-string-longa-e-aleatoria
+# SUBDL_API_KEY=
+# DEEPL_API_KEY=
+# TMDB_API_KEY=
+# LIBRE_URL=https://libretranslate.example/translate
+# LIBRE_API_KEY=
