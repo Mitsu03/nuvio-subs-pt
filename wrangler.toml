@@ -33,6 +33,18 @@ TRANSLATE_CONCURRENCY = "12"
 # Este addon e para filmes e series; anime tem addons dedicados.
 ANIME_POLICY = "exclude"
 
+# Anuncia o recurso `stream` no manifesto do addon.
+# "0" retira-o (mas a rota /stream continua a responder: e' por la que o plugin
+# do NuvioTV descobre qual e' o video). Com o plugin instalado queremos "0" —
+# senao aparecem duas entradas por episodio, e uma delas abre o YouTube fora da
+# aplicacao em vez de tocar por dentro.
+STREAMS = "0"
+# Duracao minima, em minutos, para um video poder ser o episodio. Abaixo disto
+# e' fragman, resumo ou excerto — que e' o que a busca devolve em primeiro.
+YOUTUBE_MIN_MINUTES = "40"
+# Quantos videos oferecer por episodio.
+STREAM_RESULTS = "3"
+
 # Aquece a traducao em background assim que o Nuvio pede a lista de legendas.
 PREWARM = "1"
 # Dias de validade da cache KV.
@@ -44,4 +56,7 @@ CACHE_DAYS = "30"
 #   LIBRE_URL       opcional     endpoint LibreTranslate
 #   LIBRE_API_KEY   opcional
 #   SUBDL_API_KEY   opcional     adiciona o SubDL como segunda fonte
-#   TMDB_API_KEY    opcional     resolve ids tmdb: para IMDb
+#   TMDB_API_KEY    opcional     catalogos, resolucao de ids e streams turcos
+#   YOUTUBE_API_KEY opcional     usa a API oficial em vez de ler a pagina de
+#                                resultados; so vale a pena se a busca sem
+#                                chave comecar a falhar a partir da Cloudflare

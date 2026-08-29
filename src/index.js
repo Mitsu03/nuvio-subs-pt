@@ -4,9 +4,15 @@
  * Rotas:
  *   GET /                                     pagina com o URL de instalacao
  *   GET /manifest.json                        manifesto do addon
+ *   GET /stream/{type}/{id}.json              streams com audio turco
  *   GET /subtitles/{type}/{id}.json           lista de legendas
  *   GET /subtitles/{type}/{id}/{extra}.json   idem, com extras do Stremio
  *   GET /sub/{token}.srt                      o ficheiro, ja tratado
+ *   GET /plugin/manifest.json                 repositorio de plugins do NuvioTV
+ *   GET /plugin/video/{type}/{id}.json        qual e' o video oficial (so o plugin)
+ *   GET /plugin/turcas-pt.js                  o plugin, com a origem injectada
+ *   POST /dash                                guarda um manifesto DASH
+ *   GET /dash/{id}.mpd                        serve-o ao leitor
  */
 
 import { buildManifest } from './manifest.js';
@@ -21,10 +27,13 @@ import { renderLandingPage } from './landing.js';
 import { runProbes } from './probe.js';
 import { buildCatalog, parseSkip } from './catalogs.js';
 import { isAnime } from './anime.js';
+import { buildStreams } from './streams/index.js';
+import { storeMpd, readMpd, MAX_BODY_BYTES } from './dash.js';
+import { buildPluginManifest, buildPluginSource, PLUGIN_FILENAME } from './plugin/index.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': '*',
 };
 
@@ -204,6 +213,51 @@ async function handleSubtitles(request, env, ctx, type, rawId) {
   return json({ subtitles });
 }
 
+/**
+ * Streams para um video.
+ *
+ * `fromPlugin` distingue quem pergunta, e nao e' zelo a mais: medido em
+ * producao, o Nuvio continua a pedir `/stream` ao addon mesmo depois de o
+ * manifesto deixar de anunciar o recurso. Fechar a rota a toda a gente era a
+ * correccao obvia, mas calava o plugin — que pergunta por aqui qual e' o
+ * video. Por isso o plugin tem porta propria e esta respeita o interruptor.
+ */
+async function handleStream(env, type, rawId, fromPlugin = false) {
+  if (!fromPlugin && env.STREAMS === '0') return json({ streams: [] });
+
+  const video = parseVideoId(rawId, type);
+  if (!video) return json({ streams: [] });
+
+  if (!video.imdbId && video.tmdbId) {
+    video.imdbId = await resolveTmdbToImdb(video, env, fetchJson);
+    if (!video.imdbId) return json({ streams: [] });
+  }
+
+  return json(await buildStreams(video, env));
+}
+
+/**
+ * Recebe do plugin os formatos que ele extraiu e devolve o endereco do
+ * manifesto. O corpo vem de fora, por isso ha um tecto de tamanho antes de
+ * sequer se tentar interpretar.
+ */
+async function handleDashCreate(request, env) {
+  const length = Number(request.headers.get('content-length') || 0);
+  if (length > MAX_BODY_BYTES) return json({ error: 'corpo demasiado grande' }, 413);
+
+  let body = null;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'corpo nao e JSON' }, 400);
+  }
+
+  const result = await storeMpd(body, env, new URL(request.url).origin);
+  if (result.error) return json({ error: result.error }, result.status);
+
+  return json(result, 200, { 'Cache-Control': 'no-store' });
+}
+
 async function handleSubFile(request, env, token) {
   if (!env.SIGNING_KEY) return new Response('SIGNING_KEY em falta', { status: 500, headers: CORS });
 
@@ -267,6 +321,9 @@ export default {
         kv: Boolean(env.SUBS),
         signingKey: Boolean(env.SIGNING_KEY),
         subdl: Boolean(env.SUBDL_API_KEY),
+        streams: Boolean(env.TMDB_API_KEY) && env.STREAMS !== '0',
+        youtubeApiKey: Boolean(env.YOUTUBE_API_KEY),
+        plugin: buildPluginManifest().version,
       });
     }
 
@@ -280,10 +337,45 @@ export default {
       return json(await buildCatalog(catalogId, parseSkip(extra, url), env));
     }
 
+    if (path === '/plugin/manifest.json') return json(buildPluginManifest());
+
+    if (path === `/plugin/${PLUGIN_FILENAME}`) {
+      return new Response(buildPluginSource(url.origin), {
+        headers: {
+          'Content-Type': 'application/javascript; charset=utf-8',
+          'Cache-Control': 'public, max-age=3600',
+          ...CORS,
+        },
+      });
+    }
+
+    const pluginVideo = path.match(/^\/plugin\/video\/([^/]+)\/(.+?)\.json$/);
+    if (pluginVideo) return handleStream(env, pluginVideo[1], pluginVideo[2], true);
+
+    if (path === '/dash' && request.method === 'POST') return handleDashCreate(request, env);
+
+    const dashFile = path.match(/^\/dash\/([0-9a-f]{32})\.mpd$/);
+    if (dashFile) {
+      const mpd = await readMpd(dashFile[1], env);
+      if (!mpd) return new Response('Manifesto expirado', { status: 404, headers: CORS });
+      return new Response(mpd, {
+        headers: {
+          'Content-Type': 'application/dash+xml; charset=utf-8',
+          // Curto de proposito: os enderecos la dentro expiram, e um manifesto
+          // guardado pelo leitor depois de expirarem so da erro de rede.
+          'Cache-Control': 'public, max-age=300',
+          ...CORS,
+        },
+      });
+    }
+
     const subFile = path.match(/^\/sub\/(.+)\.srt$/);
     if (subFile) return handleSubFile(request, env, subFile[1]);
 
     // Aceita a forma simples e a forma com extras do Stremio.
+    const stream = path.match(/^\/stream\/([^/]+)\/(.+?)(?:\/[^/]*)?\.json$/);
+    if (stream) return handleStream(env, stream[1], stream[2]);
+
     const subtitles = path.match(/^\/subtitles\/([^/]+)\/(.+?)(?:\/[^/]*)?\.json$/);
     if (subtitles) {
       return handleSubtitles(request, env, ctx, subtitles[1], subtitles[2]);

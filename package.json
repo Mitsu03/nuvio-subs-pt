@@ -9,7 +9,9 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "build:plugin": "node scripts/build-plugin.mjs",
+    "smoke:plugin": "node scripts/plugin-smoke.mjs"
   },
   "keywords": [
     "nuvio",
