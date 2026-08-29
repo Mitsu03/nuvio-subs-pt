@@ -13,6 +13,7 @@ export function renderLandingPage(origin, env) {
     ['Cache KV', Boolean(env.SUBS)],
     ['Fonte SubDL', Boolean(env.SUBDL_API_KEY)],
     ['Resolucao de ids TMDB', Boolean(env.TMDB_API_KEY)],
+    ['Streams turcos (YouTube oficial)', Boolean(env.TMDB_API_KEY) && env.STREAMS !== '0'],
   ]
     .map(([label, ok]) => `<li>${ok ? 'ok' : 'em falta'} &mdash; ${label}</li>`)
     .join('');
@@ -48,9 +49,21 @@ export function renderLandingPage(origin, env) {
 <h1>${manifest.name}</h1>
 <p>${manifest.description}</p>
 ${blocked}
-<h2>Instalar no Nuvio</h2>
-<p>Definicoes &rarr; Addons &rarr; Adicionar addon, e cola:</p>
+<h2>Instalar</h2>
+<p>Sao dois enderecos e dois sitios diferentes. Trocar os dois da o erro
+<code>manifest missing id</code>: o parser de addons exige um campo <code>id</code>
+que o formato de plugins nao tem.</p>
+
+<h3>1. Addon &mdash; legendas e coleccoes</h3>
+<p>Definicoes &rarr; <strong>Addons</strong> &rarr; Adicionar addon:</p>
 <p><code>${manifestUrl}</code></p>
+
+<h3>2. Plugin &mdash; video turco na TV</h3>
+<p>So no NuvioTV. Definicoes &rarr; <strong>Plugins</strong> (&laquo;Manage local
+scrapers and providers&raquo;) &rarr; <strong>Add repository</strong>:</p>
+<p><code>${origin}/plugin/manifest.json</code></p>
+<p class="hint">Confirma que <em>Enable plugin providers globally</em> esta ligado,
+ou o Nuvio instala o plugin e nunca o chama.</p>
 
 <h2>Estado</h2>
 <ul>${checks}</ul>
@@ -59,7 +72,8 @@ ${blocked}
 <h2>Diagnostico</h2>
 <p class="hint">
   <a href="/health">/health</a> mostra a configuracao em JSON.<br>
-  <code>${origin}/subtitles/series/tt11093718:1:1.json</code> lista o que existe para o primeiro episodio do Kurulus Osman.
+  <code>${origin}/subtitles/series/tt11093718:1:1.json</code> lista o que existe para o primeiro episodio do Kurulus Osman.<br>
+  <code>${origin}/stream/series/tt11093718:1:1.json</code> mostra o mesmo episodio no canal oficial.
 </p>
 </body>
 </html>`;
