@@ -45,6 +45,18 @@ YOUTUBE_MIN_MINUTES = "40"
 # Quantos videos oferecer por episodio.
 STREAM_RESULTS = "3"
 
+# Legendas turcas do proprio video oficial no YouTube — umas escritas por
+# gente, outras geradas automaticamente. Sao dois pedidos e dezenas de KB, e
+# entram quando as fontes normais nao devolvem nada em lingua nenhuma.
+# "0" desliga.
+YOUTUBE_CAPTIONS = "1"
+# Quanto tempo esperar antes de voltar a procurar, conforme o porque de nao ter
+# encontrado: minutos quando o YouTube recusou (defesa anti-bot a apanhar o IP
+# do datacentro), horas quando o video mesmo nao tem legendas.
+CAPTIONS_RETRY_MINUTES = "15"
+CAPTIONS_MISS_HOURS = "12"
+CAPTIONS_CACHE_DAYS = "180"
+
 # Legenda a partir do audio do proprio episodio (Whisper via Workers AI).
 #
 # DESLIGADO, e nao por estar incompleto: o codigo funciona e esta testado. O

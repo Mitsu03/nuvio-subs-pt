@@ -54,6 +54,44 @@ addon não se limita a agregar: quando não existe legenda na língua preferida,
 vai buscar a melhor legenda inglesa (ou turca) e traduz, mantendo o *timing*
 intacto.
 
+## Legendas: do vídeo oficial no YouTube
+
+Para séries acabadas de estrear não há legenda nas fontes normais — o
+OpenSubtitles e o SubDL têm zero para o `tt43351313` (*Muhtemel Aşk*). Mas o
+canal oficial publica o episódio inteiro no YouTube, e o YouTube costuma trazer
+legendas turcas: umas **escritas por gente**, outras geradas automaticamente.
+Nos dois casos é texto turco com marcas de tempo, que é o que o tradutor deste
+addon precisa.
+
+Medido: *Kuruluş Osman* 1. Bölüm tem faixa `manual` com 1277 deixas; as versões
+4K trazem `asr`; *Aşkın Gücü* traz `asr` com 5759. O *Muhtemel Aşk* não tem
+nenhuma — há vídeos sem, e para esses continua a não haver legenda.
+
+Contra transcrever o áudio (abaixo), não há comparação:
+
+| | legendas do YouTube | transcrever o áudio |
+|---|---|---|
+| pedidos por episódio | 2 | ~130 |
+| bytes | dezenas de KB | 128 MB |
+| estrangulamento por IP | não | sim, ao segundo MB |
+| qualidade | humana, quando `manual` | sempre automática |
+
+**As legendas automáticas vêm em janela deslizante** e não se podem servir tal
+qual: as deixas sobrepõem-se no tempo e repetem texto já mostrado. No *Aşkın
+Gücü* eram 5759 deixas, com a primeira a acabar depois de a segunda começar.
+`tidyCues` corta o fim de cada deixa no início da seguinte, descarta as que são
+prefixo da próxima, e junta as curtas até 3,5 s (com teto de 7 s e 110
+caracteres) — 5759 passam a 2130, com média de 5,2 s. A legenda escrita por
+gente não é tocada: os tempos dela já estão certos.
+
+**Limitação conhecida:** 2130 deixas dão 68 lotes de tradução, acima do teto de
+`MAX_TRANSLATE_CALLS`. A parte que não couber fica em turco — o
+comportamento normal do addon para tradução parcial, visível em
+`X-Translate-Stats`.
+
+Diagnóstico: `GET /captions/{type}/{id}.json` diz se há vídeo oficial, que
+faixas tem, e se a busca falhou por não haver legendas ou por recusa do YouTube.
+
 ## Legendas: a partir do áudio (construído, desligado)
 
 Para séries acabadas de estrear não há legenda em língua nenhuma — nem
@@ -366,7 +404,7 @@ caracteres por mês, o que dá para uns 15 a 20 episódios destes.
 ## Desenvolvimento
 
 ```bash
-npm test                       # 75 testes, sem rede
+npm test                       # 88 testes, sem rede
 node scripts/smoke.mjs         # ponta-a-ponta contra as fontes reais
 node scripts/smoke.mjs tt11093718:2:10
 npm run build:plugin           # embute plugin/turcas-pt.js no Worker
