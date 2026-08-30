@@ -54,6 +54,86 @@ addon não se limita a agregar: quando não existe legenda na língua preferida,
 vai buscar a melhor legenda inglesa (ou turca) e traduz, mantendo o *timing*
 intacto.
 
+## Legendas: do vídeo oficial no YouTube
+
+Para séries acabadas de estrear não há legenda nas fontes normais — o
+OpenSubtitles e o SubDL têm zero para o `tt43351313` (*Muhtemel Aşk*). Mas o
+canal oficial publica o episódio inteiro no YouTube, e o YouTube costuma trazer
+legendas turcas: umas **escritas por gente**, outras geradas automaticamente.
+Nos dois casos é texto turco com marcas de tempo, que é o que o tradutor deste
+addon precisa.
+
+Medido: *Kuruluş Osman* 1. Bölüm tem faixa `manual` com 1277 deixas; as versões
+4K trazem `asr`; *Aşkın Gücü* traz `asr` com 5759. O *Muhtemel Aşk* não tem
+nenhuma — há vídeos sem, e para esses continua a não haver legenda.
+
+Contra transcrever o áudio (abaixo), não há comparação:
+
+| | legendas do YouTube | transcrever o áudio |
+|---|---|---|
+| pedidos por episódio | 2 | ~130 |
+| bytes | dezenas de KB | 128 MB |
+| estrangulamento por IP | não | sim, ao segundo MB |
+| qualidade | humana, quando `manual` | sempre automática |
+
+**As legendas automáticas vêm em janela deslizante** e não se podem servir tal
+qual: as deixas sobrepõem-se no tempo e repetem texto já mostrado. No *Aşkın
+Gücü* eram 5759 deixas, com a primeira a acabar depois de a segunda começar.
+`tidyCues` corta o fim de cada deixa no início da seguinte, descarta as que são
+prefixo da próxima, e junta as curtas até 3,5 s (com teto de 7 s e 110
+caracteres) — 5759 passam a 2130, com média de 5,2 s. A legenda escrita por
+gente não é tocada: os tempos dela já estão certos.
+
+**A tradução é retomável.** 2130 deixas dão 68 lotes, acima do teto de
+`MAX_TRANSLATE_CALLS` (40). Sem mais nada, as deixas a partir da 1600 ficavam
+em turco para sempre: a visita seguinte recomeçava do princípio e parava no
+mesmo sítio. O progresso fica em KV por índice, e cada visita avança o que
+couber — uma legenda ainda incompleta não é guardada em cache, senão bloqueava
+o progresso até a cache expirar.
+
+**Não se pode fugir ao `youtubei/v1/player`.** Tentou-se ler as faixas
+directamente do HTML da página, para evitar o único endpoint que dispara a
+defesa anti-bot. Não serve: o `baseUrl` que vem no HTML está assinado com `ip`
+e `signature` e responde `200` com corpo vazio, em qualquer `fmt`. Quando o
+player recusa, o addon volta a tentar 15 minutos depois.
+
+Diagnóstico: `GET /captions/{type}/{id}.json` diz se há vídeo oficial, que
+faixas tem, e se a busca falhou por não haver legendas ou por recusa do YouTube.
+
+## Legendas: a partir do áudio (construído, desligado)
+
+Para séries acabadas de estrear não há legenda em língua nenhuma — nem
+portuguesa, nem inglesa, nem turca, nem legendas automáticas do YouTube. Sem
+texto de partida o tradutor não tem o que traduzir, e `/subtitles` devolve lista
+vazia. Medido no `tt43351313` (*Muhtemel Aşk*): zero em todas as fontes.
+
+`src/asr/` transcreve o áudio turco do próprio episódio com o Whisper (Workers
+AI) e mete o resultado no tradutor que já existe. Está escrito, testado e
+integrado — a entrada aparece como `Português (PT) (auto, do áudio)` e só
+quando não há mais nada.
+
+**Vem desligado (`ASR = "0"`), e não por estar incompleto.** O que falha é o
+acesso. Medido a partir do Worker:
+
+| O que se pediu ao `googlevideo` | Resposta |
+|---|---|
+| primeiro 1 MB, a meio do ficheiro | `206` |
+| 4 MB de uma vez | `403` |
+| 1 MB, e outro 1 MB seguido | `206`, depois `403` |
+| `youtubei/v1/player` logo a seguir | `LOGIN_REQUIRED` nos cinco clientes |
+
+É estrangulamento por IP, nos dois sítios. Um episódio são 128 MB e o
+`googlevideo` serve 1 MB de cada vez; a defesa entra ao segundo pedido. Pior: o
+IP queimado é o mesmo que serve os streams turcos, portanto ligar isto estraga
+o que já funciona.
+
+O caminho que resta é o plugin descarregar os blocos na televisão, de um IP
+residencial, e enviá-los ao Worker — o `src/asr/` fica igual, só muda quem faz
+a descarga. Ver `PLANO.md`.
+
+Diagnóstico: `GET /asr/{type}/{id}.json` mostra o estado; `?run=N` corre uma
+passagem e devolve o erro no corpo em vez de o perder nos registos.
+
 ## Legendas: o que faz
 
 - **Agrega** SubDL e OpenSubtitles (este último só procura, quando corre na Cloudflare).
@@ -332,7 +412,7 @@ caracteres por mês, o que dá para uns 15 a 20 episódios destes.
 ## Desenvolvimento
 
 ```bash
-npm test                       # 65 testes, sem rede
+npm test                       # 90 testes, sem rede
 node scripts/smoke.mjs         # ponta-a-ponta contra as fontes reais
 node scripts/smoke.mjs tt11093718:2:10
 npm run build:plugin           # embute plugin/turcas-pt.js no Worker
@@ -362,9 +442,10 @@ codificação, SRT final, cache e rejeição de token adulterado.
   de um vídeo do YouTube a partir da Cloudflare. Vai até ao fim: raspa a página,
   tenta cinco perfis de cliente no `youtubei/v1/player`, faz um pedido `Range`
   real ao `googlevideo` e lê a caixa `sidx` com os cortes dos fragmentos.
-  Medido em 30-08-2026: um vídeo comum passa (`206`, com um IP da Cloudflare
-  dentro do URL), mas os episódios dos canais turcos respondem
-  `LOGIN_REQUIRED` nos cinco clientes. Ver `PLANO.md`.
+  Medido em 30-08-2026, três corridas por vídeo: o player responde `OK` em 12
+  de 12 chamadas, e o *Kuruluş Osman* descarrega (`206`) com o IP da Cloudflare
+  dentro do URL. Fica um `403` intermitente na descarga, sistemático no
+  *Muhtemel Aşk*. Ver `PLANO.md`.
 
 ## O OpenSubtitles não descarrega a partir de datacentros
 

@@ -7,7 +7,7 @@ que há dúvida.
 
 ---
 
-## 1. Legendas a partir do áudio do próprio episódio — EM SUSPENSO
+## 1. Legendas a partir do áudio — CONSTRUÍDO, bloqueado pelo acesso
 
 ### O problema, medido
 
@@ -41,58 +41,80 @@ preso ao IP da televisão.
 
 > **Corrigido pela experiência 0 (30-08-2026):** isto não impede o Worker de
 > extrair os *seus próprios* endereços, presos ao IP dele, e descarregar por
-> eles — foi medido a funcionar. O que trava é outra coisa. Ver abaixo.
+> eles — medido a funcionar repetidamente. Ver abaixo.
 
-> **Experiência 0 — feita em 30-08-2026. Resultado: não passa, mas não pela
-> razão que se esperava.**
+> **Experiência 0 — feita, remedida, e depois construída até bater no muro.
+> Resultado: o código funciona; o acesso é que não escala.**
 
-A sonda vive em `GET /probe/player/{videoId}` (`src/youtube/probe.js`): raspa a
-página, tira `INNERTUBE_API_KEY` + `visitorData`, chama `youtubei/v1/player`
-por cinco perfis de cliente e, se algum responder `OK`, tenta mesmo descarregar
-um bocado do `googlevideo` com `Range`. O veredito é o `206`, não o `status`.
+A sonda vive em `GET /probe/player/{videoId}` e a implementação em `src/asr/`.
+Ambas ficam no repositório, com o `ASR` desligado no `wrangler.toml`.
 
-Medido, com o Worker publicado:
+### O que se mediu, por esta ordem
 
-| Vídeo | Do IP residencial | Da Cloudflare |
-|---|---|---|
-| `dQw4w9WgXcQ` (vídeo comum, 3 min) | — | **`OK`**, descarga `206`, `ip=172.68.103.95` |
-| `QvZHtdpkybc` — *Muhtemel Aşk* 1. Bölüm | `OK`, descarga `206` | `LOGIN_REQUIRED` |
-| `53Q7ulvGdkU` — *Kuruluş Osman* 1. Bölüm 4K | — | `LOGIN_REQUIRED` |
-| `0fTJyCTwznM` — *Kuruluş Osman* 1. Bölüm | — | `LOGIN_REQUIRED` |
-| `1AuB0f2B56Q` — *Kuruluş Osman* 28. Bölüm 4K | — | `LOGIN_REQUIRED` |
+**Primeira passagem.** Os quatro episódios turcos responderam `LOGIN_REQUIRED`
+nos cinco perfis de cliente. Conclusão registada na altura: barreira de
+autenticação. **Errada.**
 
-Os cinco clientes (`ANDROID`, `IOS`, `TVHTML5_SIMPLY_EMBEDDED_PLAYER`,
-`WEB_EMBEDDED_PLAYER`, `MWEB`) foram todos recusados nos episódios turcos. A
-razão que o YouTube devolve é literal: *«Bot olmadığınızı doğrulamak için oturum
-açın»* — «inicie sessão para confirmar que não é um bot».
+**Segunda passagem**, três corridas por vídeo, horas depois: 12 em 12 chamadas
+deram `OK`, e o *Kuruluş Osman* descarregou (`206`, `ip=172.68.103.95` — um IP
+da própria Cloudflare dentro do URL). Conclusão registada: viável. **Também
+errada, mas por menos.**
 
-**O que isto corrige na premissa do plano.** Estava escrito que os endereços do
-`googlevideo` estão presos ao IP e que o Worker por isso nunca poderia
-descarregar. Está errado: o vídeo comum passou o circuito completo a partir da
-Cloudflare, com `ip=172.68.103.95` — um IP da própria Cloudflare — dentro do
-URL. Quando é o Worker a extrair, o endereço fica preso ao *Worker*, e a
-descarga passa. **A extração a partir de um datacentro funciona.**
+**Terceira passagem**, já com o descarregador escrito e a pedir a sério:
 
-O que não funciona é a extração **destes** vídeos. O bloqueio é por vídeo e não
-por origem: os episódios dos canais de televisão turcos exigem sessão a partir
-de um IP não-residencial, e um vídeo qualquer não exige. A falha anterior com
-`UNPLAYABLE` era o sintoma antigo da mesma política; o `visitorData` que
-faltava não era a explicação toda.
+| O que se pediu | Resposta |
+|---|---|
+| primeiro 1 MB, a meio do ficheiro | `206` |
+| 4 MB de uma vez | `403` |
+| 1 MB, depois outro 1 MB seguido | `206`, depois **`403`** |
+| `youtubei/v1/player`, logo a seguir | **`LOGIN_REQUIRED`**, nos cinco clientes |
+| o mesmo, quatro minutos depois | ainda `LOGIN_REQUIRED` |
 
-**Consequência.** A transcrição do áudio no Worker fica em suspenso, mas não
-por impossibilidade técnica — por uma barreira de autenticação. Duas portas
-ficaram abertas, e nenhuma delas foi tentada:
+### O que isto quer dizer
 
-1. **Cookies de sessão no Worker.** Se o pedido é «inicie sessão», uma cookie de
-   uma conta YouTube guardada como segredo pode destrancá-lo. É a via directa e
-   é também a arriscada: a conta pode ser marcada, e passa a haver uma
-   credencial pessoal dentro do Worker. Decisão do dono do projeto, não técnica.
-2. **O plugin extrai, o Worker transcreve.** O plugin já corre na televisão e já
-   obtém estes endereços com sucesso — é o que faz hoje para tocar. Não precisa
-   de mandar os 135 MB: com a `sidx` lida (ver abaixo, já medida), pode
-   descarregar um bloco de ~8 min (~7,7 MB) e mandar só esse. Continua a ser
-   ~128 MB para o episódio inteiro, mas espalhados e em segundo plano, e nada
-   disso atravessa o Worker duas vezes.
+As três medições não se contradizem: descrevem um **estrangulamento por IP**. O
+`403` na descarga e o `LOGIN_REQUIRED` no player são a mesma defesa, em dois
+sítios. Os resultados «intermitentes» das duas primeiras passagens eram função
+do que se tinha pedido antes — e não de sorte.
+
+A premissa original do plano continua desmentida: o `ip=` no URL é o do Worker
+quando é o Worker a extrair, e a descarga passa. **Extrair de um datacentro
+funciona.** O que não funciona é fazê-lo **à escala necessária**: um episódio
+são 128 MB, o googlevideo serve 1 MB de cada vez, e a defesa entra ao segundo
+pedido. Não há aqui uma afinação que resolva — o volume é o problema.
+
+**E tem um custo colateral.** O IP que o ASR queima é o mesmo que serve os
+streams turcos. Ligar isto degrada uma funcionalidade que hoje funciona.
+
+### O que ficou construído, e serve
+
+O código está escrito, testado e correto — o que falha é o acesso, não ele:
+
+| Módulo | O que faz |
+|---|---|
+| `src/youtube/sidx.js` | lê a caixa `sidx` e devolve as fronteiras dos fragmentos |
+| `src/asr/audio.js` | extrai o endereço, corta em blocos, descarrega em pedaços de 1 MB |
+| `src/asr/whisper.js` | transcreve um bloco, com modelos de reserva |
+| `src/asr/index.js` | passagens incrementais com estado em KV e orçamento de subpedidos |
+| `src/index.js` | oferece `Português (PT) (auto, do áudio)` quando não há mais nada |
+| `GET /asr/{type}/{id}.json` | estado da transcrição; `?run=N` corre uma passagem |
+
+Dez testes cobrem as chaves de KV, o corte em blocos, os deslocamentos de
+tempo, a leitura da transcrição a partir de KV e as recusas (sem KV, desligado,
+transcrição por fazer).
+
+### O caminho que resta
+
+**O plugin descarrega, o Worker transcreve.** O plugin já corre na televisão,
+de um IP residencial, e já extrai estes endereços com sucesso — é o que faz
+hoje para tocar. Com a `sidx` lida, pode descarregar um bloco e enviá-lo ao
+Worker, que o transcreve e devolve. O `src/asr/` fica igual: só muda quem faz a
+descarga.
+
+A outra porta — **cookies de sessão no Worker** — não resolve isto. Destranca o
+`LOGIN_REQUIRED` do player, mas o `403` da descarga é estrangulamento de
+tráfego, e uma conta autenticada a puxar 128 MB de um IP de datacentro é um
+candidato ainda melhor a ser marcada.
 
 **Os cortes estão medidos e o parser existe.** Para o *Muhtemel Aşk* 1. Bölüm,
 lido a partir do `indexRange` (`723-10774`), itag 140:
@@ -235,8 +257,12 @@ como o `streamRepository` e o `subtitleRepository` fazem para os deles. Logo o
 catálogo do addon turco tem mesmo de viver em `/turcas/catalog/...`, e é onde
 está.
 
-A **1** parou na experiência 0, com um «não» que vale mais do que um «não»
-seco: a extração a partir da Cloudflare funciona, os cortes do áudio estão
-medidos e o parser está escrito. Falta destrancar o acesso a estes vídeos
-concretos, e isso é uma decisão sobre credenciais, não um problema por
-resolver. Está tudo em «Consequência», acima.
+A **1** está construída e desligada. Levou três vereditos até assentar, e os
+dois primeiros estavam errados: «barreira de autenticação» veio de uma passagem
+única; «viável» veio de repetir só a parte barata. Só ao pedir megabytes a
+sério apareceu o que estava lá desde o início — um estrangulamento por IP, que
+o volume de um episódio inteiro aciona sempre.
+
+A lição para a próxima experiência: medir na escala do uso real, e não na de
+uma sonda. Uma sonda que pede 11 KB não descobre um limite que só aparece ao
+segundo megabyte.

@@ -45,6 +45,53 @@ YOUTUBE_MIN_MINUTES = "40"
 # Quantos videos oferecer por episodio.
 STREAM_RESULTS = "3"
 
+# Legendas turcas do proprio video oficial no YouTube — umas escritas por
+# gente, outras geradas automaticamente. Sao dois pedidos e dezenas de KB, e
+# entram quando as fontes normais nao devolvem nada em lingua nenhuma.
+# "0" desliga.
+YOUTUBE_CAPTIONS = "1"
+# Quanto tempo esperar antes de voltar a procurar, conforme o porque de nao ter
+# encontrado: minutos quando o YouTube recusou (defesa anti-bot a apanhar o IP
+# do datacentro), horas quando o video mesmo nao tem legendas.
+CAPTIONS_RETRY_MINUTES = "15"
+CAPTIONS_MISS_HOURS = "12"
+CAPTIONS_CACHE_DAYS = "180"
+# Dias que o progresso de uma traducao a meio fica guardado. Uma legenda de
+# 2130 deixas sao 68 lotes e o tecto sao 40: sem progresso, cada visita
+# recomecava do principio e parava sempre no mesmo sitio.
+TRANSLATE_PROGRESS_DAYS = "7"
+
+# Legenda a partir do audio do proprio episodio (Whisper via Workers AI).
+#
+# DESLIGADO, e nao por estar incompleto: o codigo funciona e esta testado. O
+# que nao funciona e' o acesso. Descarregar 128 MB por episodio a partir de um
+# IP de datacentro aciona a defesa anti-bot do YouTube — medido: o primeiro MB
+# passa, o segundo devolve `403`, e a seguir o proprio `youtubei/v1/player`
+# passa a responder `LOGIN_REQUIRED` durante varios minutos. Ligar isto degrada
+# tambem os streams turcos, que dependem do mesmo IP.
+#
+# Ver PLANO.md. O caminho que resta e' o plugin descarregar na televisao, de um
+# IP residencial, e mandar os blocos ao Worker.
+ASR = "0"
+# Segundos de audio por bloco mandado ao Whisper. Com 480 (8 min) um episodio
+# de 2h20 da 18 blocos; blocos maiores arriscam o tecto de tamanho do modelo.
+ASR_BLOCK_SECONDS = "480"
+# Blocos por passagem.
+ASR_BLOCKS_PER_PASS = "8"
+# Tecto de subpedidos por passagem. Nao e' o numero de blocos que conta: um
+# bloco de 8 min sao ~7,7 MB e o googlevideo so serve 1 MB de cada vez, logo
+# nove subpedidos por bloco. A Cloudflare corta aos 50 por invocacao.
+ASR_SUBREQUEST_BUDGET = "30"
+# Falhas seguidas antes de desistir da passagem. Sem isto, um `403` fazia
+# percorrer os 18 blocos todos para nada.
+ASR_MAX_FAILURES = "3"
+# Lingua falada no audio.
+ASR_LANGUAGE = "tr"
+# Um episodio transcrito nunca muda.
+ASR_CACHE_DAYS = "365"
+# Modelos de transcricao, por ordem. Ha reservas atras do que aqui estiver.
+WHISPER_MODEL = "@cf/openai/whisper-large-v3-turbo"
+
 # Aquece a traducao em background assim que o Nuvio pede a lista de legendas.
 PREWARM = "1"
 # Dias de validade da cache KV.
