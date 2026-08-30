@@ -1,11 +1,13 @@
 # Plano
 
-Duas frentes decididas em 29-08-2026, ambas por fazer. Os números aqui são
-medidos, não estimados — onde há dúvida está escrito que há dúvida.
+Duas frentes decididas em 29-08-2026 e trabalhadas em 30-08-2026. A **2** está
+feita e publicada; a **1** parou na experiência 0, com a resposta registada
+abaixo. Os números aqui são medidos, não estimados — onde há dúvida está escrito
+que há dúvida.
 
 ---
 
-## 1. Legendas a partir do áudio do próprio episódio
+## 1. Legendas a partir do áudio do próprio episódio — EM SUSPENSO
 
 ### O problema, medido
 
@@ -33,27 +35,81 @@ estão a dar agora.
 ### O que trava tudo, e tem de ser respondido primeiro
 
 Os endereços do `googlevideo` **estão presos ao IP que os pediu** — o parâmetro
-`ip=` viaja no próprio URL (visível no registo do VLC). Como o Worker corre num
-datacentro da Cloudflare, não pode descarregar o áudio que o plugin extraiu na
-televisão.
+`ip=` viaja no próprio URL (visível no registo do VLC). Por isso o Worker não
+pode descarregar o áudio que *o plugin* extraiu na televisão: esse endereço está
+preso ao IP da televisão.
 
-> **Experiência 0 — decide se o resto vale a pena.**
-> Descobrir se a extração funciona *a partir da Cloudflare* com a receita
-> completa: raspar a página do vídeo, tirar `INNERTUBE_API_KEY` + `visitorData`,
-> e chamar `youtubei/v1/player` com o cliente `ANDROID` e o cabeçalho
-> `x-goog-visitor-id`.
->
-> A tentativa que falhou (`UNPLAYABLE`) foi feita **sem** `visitorData`, e foi
-> esse campo em falta que a explicou. Nunca se testou a receita boa a partir de
-> um IP de datacentro. Um endpoint temporário no Worker responde a isto em
-> minutos.
->
-> - **Se der `OK`:** o Worker extrai os seus próprios endereços, ligados ao IP
->   dele, e descarrega o áudio sozinho. Segue-se para baixo.
-> - **Se der `UNPLAYABLE`:** não há caminho limpo. O áudio são ~135 MB e mandá-lo
->   da televisão para o Worker está fora de questão. Fica em suspenso.
+> **Corrigido pela experiência 0 (30-08-2026):** isto não impede o Worker de
+> extrair os *seus próprios* endereços, presos ao IP dele, e descarregar por
+> eles — foi medido a funcionar. O que trava é outra coisa. Ver abaixo.
 
-### Como partir o áudio, se a experiência 0 passar
+> **Experiência 0 — feita em 30-08-2026. Resultado: não passa, mas não pela
+> razão que se esperava.**
+
+A sonda vive em `GET /probe/player/{videoId}` (`src/youtube/probe.js`): raspa a
+página, tira `INNERTUBE_API_KEY` + `visitorData`, chama `youtubei/v1/player`
+por cinco perfis de cliente e, se algum responder `OK`, tenta mesmo descarregar
+um bocado do `googlevideo` com `Range`. O veredito é o `206`, não o `status`.
+
+Medido, com o Worker publicado:
+
+| Vídeo | Do IP residencial | Da Cloudflare |
+|---|---|---|
+| `dQw4w9WgXcQ` (vídeo comum, 3 min) | — | **`OK`**, descarga `206`, `ip=172.68.103.95` |
+| `QvZHtdpkybc` — *Muhtemel Aşk* 1. Bölüm | `OK`, descarga `206` | `LOGIN_REQUIRED` |
+| `53Q7ulvGdkU` — *Kuruluş Osman* 1. Bölüm 4K | — | `LOGIN_REQUIRED` |
+| `0fTJyCTwznM` — *Kuruluş Osman* 1. Bölüm | — | `LOGIN_REQUIRED` |
+| `1AuB0f2B56Q` — *Kuruluş Osman* 28. Bölüm 4K | — | `LOGIN_REQUIRED` |
+
+Os cinco clientes (`ANDROID`, `IOS`, `TVHTML5_SIMPLY_EMBEDDED_PLAYER`,
+`WEB_EMBEDDED_PLAYER`, `MWEB`) foram todos recusados nos episódios turcos. A
+razão que o YouTube devolve é literal: *«Bot olmadığınızı doğrulamak için oturum
+açın»* — «inicie sessão para confirmar que não é um bot».
+
+**O que isto corrige na premissa do plano.** Estava escrito que os endereços do
+`googlevideo` estão presos ao IP e que o Worker por isso nunca poderia
+descarregar. Está errado: o vídeo comum passou o circuito completo a partir da
+Cloudflare, com `ip=172.68.103.95` — um IP da própria Cloudflare — dentro do
+URL. Quando é o Worker a extrair, o endereço fica preso ao *Worker*, e a
+descarga passa. **A extração a partir de um datacentro funciona.**
+
+O que não funciona é a extração **destes** vídeos. O bloqueio é por vídeo e não
+por origem: os episódios dos canais de televisão turcos exigem sessão a partir
+de um IP não-residencial, e um vídeo qualquer não exige. A falha anterior com
+`UNPLAYABLE` era o sintoma antigo da mesma política; o `visitorData` que
+faltava não era a explicação toda.
+
+**Consequência.** A transcrição do áudio no Worker fica em suspenso, mas não
+por impossibilidade técnica — por uma barreira de autenticação. Duas portas
+ficaram abertas, e nenhuma delas foi tentada:
+
+1. **Cookies de sessão no Worker.** Se o pedido é «inicie sessão», uma cookie de
+   uma conta YouTube guardada como segredo pode destrancá-lo. É a via directa e
+   é também a arriscada: a conta pode ser marcada, e passa a haver uma
+   credencial pessoal dentro do Worker. Decisão do dono do projeto, não técnica.
+2. **O plugin extrai, o Worker transcreve.** O plugin já corre na televisão e já
+   obtém estes endereços com sucesso — é o que faz hoje para tocar. Não precisa
+   de mandar os 135 MB: com a `sidx` lida (ver abaixo, já medida), pode
+   descarregar um bloco de ~8 min (~7,7 MB) e mandar só esse. Continua a ser
+   ~128 MB para o episódio inteiro, mas espalhados e em segundo plano, e nada
+   disso atravessa o Worker duas vezes.
+
+**Os cortes estão medidos e o parser existe.** Para o *Muhtemel Aşk* 1. Bölüm,
+lido a partir do `indexRange` (`723-10774`), itag 140:
+
+| | |
+|---|---|
+| fragmentos na `sidx` | 835 |
+| duração somada | 8330,8 s (2h18m51s — bate certo) |
+| primeiro fragmento | bytes 10779–172584, 9,985 s |
+| blocos de 8 min | 18 |
+| tamanho da faixa | 128,6 MB |
+
+Ou seja, o passo «como partir o áudio» abaixo deixou de ser palpite: o
+`parseSidx`/`chunkFragments` em `src/youtube/probe.js` já produz a lista de
+cortes, e 18 chamadas ao Whisper cobrem o episódio. Falta só o áudio chegar lá.
+
+### Como partir o áudio — já medido
 
 O Whisper não engole 2h18 de áudio de uma vez, e o Worker não tem ffmpeg para
 cortar. Mas **os cortes já estão calculados**: o `indexRange` que o
@@ -69,7 +125,10 @@ Sequência, para cada bloco:
 4. Mandar ao Whisper e guardar o texto com o deslocamento temporal do bloco.
 
 Blocos de 5 a 10 minutos parecem o compromisso certo entre número de chamadas e
-contexto para o modelo, mas **isto é um palpite e tem de ser medido**.
+contexto para o modelo. **Medido** para o *Muhtemel Aşk* 1. Bölüm: com blocos de
+8 minutos são 18 chamadas ao Whisper por episódio. O `parseSidx` e o
+`chunkFragments` que produzem esta lista estão escritos em
+`src/youtube/probe.js`.
 
 ### Depois da transcrição
 
@@ -98,7 +157,7 @@ demais para se repetir.
 
 ---
 
-## 2. Separar o addon de legendas do addon de coleções
+## 2. Separar o addon de legendas do addon de coleções — FEITO (30-08-2026)
 
 ### Porquê
 
@@ -142,10 +201,13 @@ utilizador. Só compensa se um dia tiverem donos diferentes.
 
 1. `src/manifest.js` passa a construir dois manifestos a partir de uma função
    parametrizada, em vez de um só com recursos condicionais.
-2. Router: acrescentar `/turcas/manifest.json`. O `/catalog/...` fica onde está,
-   **mas isto tem de ser verificado no NuvioTV antes de se dar por feito** — se
-   ele resolver os recursos a partir da base do manifesto, o catálogo passa para
-   `/turcas/catalog/...`.
+2. Router: acrescentar `/turcas/manifest.json`. **Verificado na fonte do
+   NuvioTVSmart, e a resposta é sim:** o `addonRepository.canonicalizeUrl()`
+   corta o sufixo `/manifest.json`, e o `catalogRepository.buildCatalogUrl`
+   constrói `${basePath}/catalog/...` (o mesmo em `streamRepository` e
+   `subtitleRepository`). O catálogo passou portanto para
+   `/turcas/catalog/...`; as rotas sem prefixo ficaram a responder para quem
+   instalou a versão anterior.
 3. Página inicial: três endereços em vez de dois, com o mesmo aviso que já lá
    está sobre não os trocar.
 4. `README.md`: separar as secções, que hoje estão entrelaçadas.
@@ -163,9 +225,18 @@ um ecrã inicial subitamente vazio.
 
 ## Ordem sugerida
 
-A **2** primeiro: é arrumação, tem risco baixo, e o único ponto por confirmar
-(onde o Nuvio vai buscar os catálogos) resolve-se numa tentativa.
+**As duas foram feitas em 30-08-2026.**
 
-A **1** depois, e só até à experiência 0. O resultado dessa experiência decide
-se há projeto ou se a ideia morre ali — e não vale a pena escrever mais código
-antes de o saber.
+A **2** está publicada. O ponto que estava por confirmar — onde o Nuvio vai
+buscar os catálogos — não precisou de tentativa nenhuma: está na fonte do
+NuvioTVSmart. O `addonRepository.canonicalizeUrl()` corta o `/manifest.json` e
+o `catalogRepository.buildCatalogUrl` constrói `${basePath}/catalog/...`, tal
+como o `streamRepository` e o `subtitleRepository` fazem para os deles. Logo o
+catálogo do addon turco tem mesmo de viver em `/turcas/catalog/...`, e é onde
+está.
+
+A **1** parou na experiência 0, com um «não» que vale mais do que um «não»
+seco: a extração a partir da Cloudflare funciona, os cortes do áudio estão
+medidos e o parser está escrito. Falta destrancar o acesso a estes vídeos
+concretos, e isso é uma decisão sobre credenciais, não um problema por
+resolver. Está tudo em «Consequência», acima.

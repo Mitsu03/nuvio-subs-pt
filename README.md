@@ -358,6 +358,13 @@ codificação, SRT final, cache e rejeição de token adulterado.
 - `/plugin/manifest.json` — o repositório de plugins que o NuvioTV instala.
 - `/probe` — que fontes respondem a partir do Worker e que modelos de tradução
   ainda existem. É por aqui que se apanha um modelo descontinuado.
+- `/probe/player/{videoId}` — se o Worker consegue extrair e descarregar o áudio
+  de um vídeo do YouTube a partir da Cloudflare. Vai até ao fim: raspa a página,
+  tenta cinco perfis de cliente no `youtubei/v1/player`, faz um pedido `Range`
+  real ao `googlevideo` e lê a caixa `sidx` com os cortes dos fragmentos.
+  Medido em 30-08-2026: um vídeo comum passa (`206`, com um IP da Cloudflare
+  dentro do URL), mas os episódios dos canais turcos respondem
+  `LOGIN_REQUIRED` nos cinco clientes. Ver `PLANO.md`.
 
 ## O OpenSubtitles não descarrega a partir de datacentros
 

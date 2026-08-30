@@ -38,6 +38,7 @@ import { buildSubtitle } from './subtitles.js';
 import { resolveEngineName } from './translate/index.js';
 import { renderLandingPage } from './landing.js';
 import { runProbes } from './probe.js';
+import { probePlayer } from './youtube/probe.js';
 import { buildCatalog, parseSkip } from './catalogs.js';
 import { isAnime } from './anime.js';
 import { buildStreams } from './streams/index.js';
@@ -348,6 +349,13 @@ export default {
     }
 
     if (path === '/probe') return json(await runProbes(env));
+
+    // Experiencia 0 do plano: a extracao do audio funciona a partir de um IP de
+    // datacentro? Sonda temporaria — sai quando a resposta estiver arrumada.
+    const probeVideo = path.match(/^\/probe\/player\/([A-Za-z0-9_-]{11})$/);
+    if (probeVideo) {
+      return json(await probePlayer(probeVideo[1]), 200, { 'Cache-Control': 'no-store' });
+    }
 
     // /catalog/series/{id}.json e /catalog/series/{id}/skip=40.json
     const catalog = routePath.match(/^\/catalog\/([^/]+)\/([^/]+?)(?:\/(.+?))?\.json$/);
