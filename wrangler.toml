@@ -33,7 +33,7 @@ TRANSLATE_CONCURRENCY = "12"
 # Este addon e para filmes e series; anime tem addons dedicados.
 ANIME_POLICY = "exclude"
 
-# Anuncia o recurso `stream` no manifesto do addon.
+# Anuncia o recurso `stream` no manifesto do addon turco (/turcas/manifest.json).
 # "0" retira-o (mas a rota /stream continua a responder: e' por la que o plugin
 # do NuvioTV descobre qual e' o video). Com o plugin instalado queremos "0" —
 # senao aparecem duas entradas por episodio, e uma delas abre o YouTube fora da

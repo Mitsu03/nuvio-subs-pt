@@ -10,7 +10,7 @@ import {
   rankVideos,
 } from '../src/streams/match.js';
 import { buildQueries, toStream, humanDuration, buildStreams } from '../src/streams/index.js';
-import { buildManifest } from '../src/manifest.js';
+import { buildTurcasManifest } from '../src/manifest.js';
 
 /** Temporadas do Kurulus Osman, na forma que o TMDB devolve. */
 const KURULUS_SEASONS = [
@@ -172,7 +172,7 @@ test('streams: sem chave TMDB nao ha resposta nenhuma', async () => {
 
 test('streams: STREAMS=0 retira o recurso do manifesto', () => {
   const env = { TMDB_API_KEY: 'x', STREAMS: '0' };
-  const names = buildManifest(env).resources.map((resource) => resource.name);
+  const names = buildTurcasManifest(env).resources.map((resource) => resource.name);
 
   assert.ok(!names.includes('stream'));
 });
@@ -208,7 +208,7 @@ test('streams: o que nao e turco sai vazio e fica guardado assim', async () => {
 });
 
 test('streams: o recurso so entra no manifesto quando pode funcionar', () => {
-  const names = (env) => buildManifest(env).resources.map((resource) => resource.name);
+  const names = (env) => buildTurcasManifest(env).resources.map((resource) => resource.name);
 
   assert.ok(!names({}).includes('stream'));
   assert.ok(names({ TMDB_API_KEY: 'x' }).includes('stream'));
