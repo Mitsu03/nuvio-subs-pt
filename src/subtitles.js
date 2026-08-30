@@ -68,7 +68,7 @@ export async function loadCues(payload, env) {
  *
  * @returns {Promise<{ srt: string, engine: string|null, translated: number, failed: number }>}
  */
-export async function buildSubtitle(payload, env) {
+export async function buildSubtitle(payload, env, options = {}) {
   const { cues } = await loadCues(payload, env);
 
   if (!payload.tr) {
@@ -78,7 +78,35 @@ export async function buildSubtitle(payload, env) {
   // O tradutor trabalha melhor com a deixa numa linha so; a quebra de linha de
   // uma legenda e' cosmetica e e' reposta a seguir, ja com o texto traduzido.
   const source = cues.map((cue) => flattenCueText(cue.text));
-  const result = await translateLines(source, { from: payload.src || 'en', to: payload.lang }, env);
+
+  // Uma legenda grande nao cabe num pedido: sao 68 lotes para as 2130 deixas
+  // que as legendas automaticas do YouTube dao, e o tecto sao 40 chamadas.
+  // O que ja foi traduzido fica guardado por indice, e a visita seguinte
+  // continua em vez de recomecar e parar no mesmo sitio.
+  const progressoKey = options.progressKey || null;
+  let feitas = null;
+  if (progressoKey && env.SUBS) {
+    feitas = await env.SUBS.get(progressoKey, 'json').catch(() => null);
+  }
+
+  const result = await translateLines(
+    source,
+    { from: payload.src || 'en', to: payload.lang, feitas },
+    env,
+  );
+
+  if (progressoKey && env.SUBS && result.progresso) {
+    if (result.pendentes > 0) {
+      // Guarda-se so enquanto faltar alguma coisa; completo, o SRT final e' que
+      // vale e o progresso deixa de servir para nada.
+      const dias = Number(env.TRANSLATE_PROGRESS_DAYS || 7);
+      await env.SUBS.put(progressoKey, JSON.stringify(result.progresso), {
+        expirationTtl: dias * 86400,
+      }).catch(() => {});
+    } else {
+      await env.SUBS.delete(progressoKey).catch(() => {});
+    }
+  }
 
   const translatedCues = cues.map((cue, index) => ({
     ...cue,
@@ -90,6 +118,7 @@ export async function buildSubtitle(payload, env) {
     engine: result.engine,
     translated: result.translated,
     failed: result.failed,
+    pendentes: result.pendentes,
     error: result.error,
   };
 }

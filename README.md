@@ -84,10 +84,18 @@ prefixo da próxima, e junta as curtas até 3,5 s (com teto de 7 s e 110
 caracteres) — 5759 passam a 2130, com média de 5,2 s. A legenda escrita por
 gente não é tocada: os tempos dela já estão certos.
 
-**Limitação conhecida:** 2130 deixas dão 68 lotes de tradução, acima do teto de
-`MAX_TRANSLATE_CALLS`. A parte que não couber fica em turco — o
-comportamento normal do addon para tradução parcial, visível em
-`X-Translate-Stats`.
+**A tradução é retomável.** 2130 deixas dão 68 lotes, acima do teto de
+`MAX_TRANSLATE_CALLS` (40). Sem mais nada, as deixas a partir da 1600 ficavam
+em turco para sempre: a visita seguinte recomeçava do princípio e parava no
+mesmo sítio. O progresso fica em KV por índice, e cada visita avança o que
+couber — uma legenda ainda incompleta não é guardada em cache, senão bloqueava
+o progresso até a cache expirar.
+
+**Não se pode fugir ao `youtubei/v1/player`.** Tentou-se ler as faixas
+directamente do HTML da página, para evitar o único endpoint que dispara a
+defesa anti-bot. Não serve: o `baseUrl` que vem no HTML está assinado com `ip`
+e `signature` e responde `200` com corpo vazio, em qualquer `fmt`. Quando o
+player recusa, o addon volta a tentar 15 minutos depois.
 
 Diagnóstico: `GET /captions/{type}/{id}.json` diz se há vídeo oficial, que
 faixas tem, e se a busca falhou por não haver legendas ou por recusa do YouTube.
@@ -404,7 +412,7 @@ caracteres por mês, o que dá para uns 15 a 20 episódios destes.
 ## Desenvolvimento
 
 ```bash
-npm test                       # 88 testes, sem rede
+npm test                       # 90 testes, sem rede
 node scripts/smoke.mjs         # ponta-a-ponta contra as fontes reais
 node scripts/smoke.mjs tt11093718:2:10
 npm run build:plugin           # embute plugin/turcas-pt.js no Worker

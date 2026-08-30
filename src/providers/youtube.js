@@ -21,7 +21,7 @@
  * videos sem, e para esses continua a nao haver legenda em lado nenhum.
  */
 
-import { watchConfig, playerResponse } from '../youtube/player.js';
+import { watchConfig, playerResponse, BROWSER_UA } from '../youtube/player.js';
 
 /** A faixa turca, preferindo a escrita por gente a` gerada pela maquina. */
 export function pickTrack(tracks, lang = 'tr') {
@@ -115,8 +115,13 @@ export function tidyCues(cues, minMillis = 3500, maxChars = 110, maxMillis = 700
  */
 export async function fetchYoutubeCaptions(videoId, env, lang = 'tr') {
   try {
+    // Tentou-se ler as faixas directamente do HTML da pagina, para evitar o
+    // `youtubei/v1/player` — que e' o unico endpoint a disparar a defesa
+    // anti-bot. Nao serve: o `baseUrl` que vem no HTML esta assinado com `ip`
+    // e `signature` e responde `200` com corpo vazio, em qualquer `fmt`. So o
+    // endereco que sai do player e' que entrega o texto.
     const config = await watchConfig(videoId);
-    if (config.error) return { motivo: 'recusado' };
+    if (config.error) return { motivo: 'recusado', erro: config.error };
 
     const player = await playerResponse(videoId, config);
     if (player.status !== 'OK') return { motivo: 'recusado', status: player.status };
@@ -129,10 +134,13 @@ export async function fetchYoutubeCaptions(videoId, env, lang = 'tr') {
     const url = new URL(track.baseUrl);
     url.searchParams.set('fmt', 'json3');
 
-    const response = await fetch(url.toString());
-    if (!response.ok) return { motivo: 'recusado', status: response.status };
+    const legenda = await fetch(url.toString(), { headers: { 'User-Agent': BROWSER_UA } });
+    if (!legenda.ok) return { motivo: 'recusado', status: legenda.status };
 
-    const cruas = json3ToCues(await response.json());
+    const texto = await legenda.text();
+    if (!texto) return { motivo: 'recusado', erro: 'timedtext vazio' };
+
+    const cruas = json3ToCues(JSON.parse(texto));
     if (!cruas.length) return { motivo: 'sem-faixa' };
 
     // So o ASR precisa de ser arrumado; uma legenda escrita por gente ja vem
@@ -141,7 +149,9 @@ export async function fetchYoutubeCaptions(videoId, env, lang = 'tr') {
     const cues = asr ? tidyCues(cruas) : cruas;
 
     return { cues, kind: asr ? 'asr' : 'manual', lang, cruas: cruas.length };
-  } catch {
-    return { motivo: 'recusado' };
+  } catch (error) {
+    // A causa viaja com o motivo: um `catch` mudo aqui escondeu um erro de
+    // programacao atras de um «o YouTube recusou» que nao era verdade.
+    return { motivo: 'recusado', erro: String((error && error.message) || error) };
   }
 }

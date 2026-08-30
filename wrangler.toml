@@ -56,6 +56,10 @@ YOUTUBE_CAPTIONS = "1"
 CAPTIONS_RETRY_MINUTES = "15"
 CAPTIONS_MISS_HOURS = "12"
 CAPTIONS_CACHE_DAYS = "180"
+# Dias que o progresso de uma traducao a meio fica guardado. Uma legenda de
+# 2130 deixas sao 68 lotes e o tecto sao 40: sem progresso, cada visita
+# recomecava do principio e parava sempre no mesmo sitio.
+TRANSLATE_PROGRESS_DAYS = "7"
 
 # Legenda a partir do audio do proprio episodio (Whisper via Workers AI).
 #

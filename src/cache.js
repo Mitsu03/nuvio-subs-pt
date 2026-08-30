@@ -49,6 +49,12 @@ const TTL_PARCIAL = 6 * 3600;
 export function cacheTtlFor(payload, built) {
   if (!payload.tr) return null; // sem traducao pedida: validade normal
 
+  // Traducao a meio, com o resto ja agendado: nao se guarda de todo. Guardar
+  // um ficheiro incompleto fazia a visita seguinte servi-lo da cache sem
+  // chegar a traduzir mais nada — e o progresso ficava parado ate a cache
+  // expirar. Sem guardar, cada visita avanca mais um pedaco.
+  if (built.pendentes > 0) return 0;
+
   const total = built.translated + built.failed;
   if (total === 0 || built.translated === 0) return 0;
 

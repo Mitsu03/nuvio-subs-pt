@@ -65,7 +65,7 @@ export function buildBatches(lines, maxLines = BATCH_MAX_LINES, maxChars = BATCH
  */
 export async function translateLines(lines, options, env) {
   const engineName = resolveEngineName(env);
-  if (!engineName) return { lines, engine: null, translated: 0, failed: lines.length };
+  if (!engineName) return { lines, engine: null, translated: 0, failed: lines.length, pendentes: lines.length };
 
   const engine = ENGINES[engineName];
   const engineOptions = { ...options, mode: engineName === 'workersai-m2m' ? 'm2m' : 'instruct' };
@@ -76,50 +76,86 @@ export async function translateLines(lines, options, env) {
   const concurrency = Math.max(1, Number(env.TRANSLATE_CONCURRENCY) || 12);
   const batches = buildBatches(lines);
 
-  // Um episodio destes tem 800 a 1200 deixas, ou seja 20 a 30 lotes. Em fila
-  // seriam mais de um minuto de espera antes de o leitor receber o ficheiro;
-  // em paralelo ficam poucos segundos. A ordem e preservada pelo mapLimit.
-  const attempted = batches.slice(0, maxCalls);
-  const skipped = batches.slice(maxCalls);
+  // Cada lote tem de saber onde comeca na legenda inteira: e' por indice que se
+  // sabe o que ja foi traduzido numa passagem anterior.
+  let at = 0;
+  const situados = batches.map((batch) => {
+    const situado = { batch, from: at };
+    at += batch.length;
+    return situado;
+  });
+
+  // Traducao retomavel. Uma legenda de 2130 deixas — que e' o que as legendas
+  // automaticas do YouTube dao para um episodio — sao 68 lotes, acima do tecto
+  // de `MAX_TRANSLATE_CALLS`. Sem isto, as deixas a partir da 1600 ficavam em
+  // turco para sempre: a passagem seguinte recomecava do principio e voltava a
+  // parar no mesmo sitio. Com o progresso guardado, cada visita avanca.
+  const feitas = options.feitas || null;
+  const jaFeito = (situado) =>
+    feitas && situado.batch.every((_, index) => typeof feitas[situado.from + index] === 'string');
+
+  const porFazer = situados.filter((situado) => !jaFeito(situado));
+  const attempted = porFazer.slice(0, maxCalls);
+  const skipped = porFazer.slice(maxCalls);
 
   // A razao da primeira falha e guardada: um lote que falha em silencio ja
   // custou um diagnostico as cegas (um modelo descontinuado aparecia so como
   // "zero linhas traduzidas"), por isso o motivo tem de chegar a superficie.
   let firstError = null;
 
-  const results = await mapLimit(attempted, concurrency, async (batch) => {
+  const results = await mapLimit(attempted, concurrency, async (situado) => {
     try {
-      const result = await engine.translateBatch(batch, engineOptions, env);
-      if (!Array.isArray(result) || result.length !== batch.length) {
+      const result = await engine.translateBatch(situado.batch, engineOptions, env);
+      if (!Array.isArray(result) || result.length !== situado.batch.length) {
         throw new Error('contagem de linhas desalinhada');
       }
-      return result.map((line, index) => (line && line.trim() !== '' ? line : batch[index]));
+      return result.map((line, index) => (line && line.trim() !== '' ? line : situado.batch[index]));
     } catch (error) {
       if (!firstError) firstError = error.message;
       return null;
     }
   });
 
-  const output = [];
+  // Parte-se do original e aplica-se por cima o que ja estava feito e o que se
+  // acabou de fazer: assim o array tem sempre o tamanho certo e a legenda
+  // continua sincronizada, mesmo com uma parte por traduzir.
+  const output = lines.slice();
+  const progresso = feitas ? { ...feitas } : {};
   let translated = 0;
   let failed = 0;
 
+  for (const [indice, texto] of Object.entries(progresso)) {
+    const posicao = Number(indice);
+    if (posicao < output.length) {
+      output[posicao] = texto;
+      translated += 1;
+    }
+  }
+
   results.forEach((result, index) => {
-    const batch = attempted[index];
+    const situado = attempted[index];
     if (result) {
-      output.push(...result);
-      translated += batch.length;
+      result.forEach((linha, offset) => {
+        output[situado.from + offset] = linha;
+        progresso[situado.from + offset] = linha;
+      });
+      translated += situado.batch.length;
     } else {
       // Um lote que falhe fica com o original: a legenda continua sincronizada.
-      output.push(...batch);
-      failed += batch.length;
+      failed += situado.batch.length;
     }
   });
 
-  for (const batch of skipped) {
-    output.push(...batch);
-    failed += batch.length;
-  }
+  const pendentes = skipped.reduce((soma, situado) => soma + situado.batch.length, 0);
+  failed += pendentes;
 
-  return { lines: output, engine: engineName, translated, failed, error: firstError };
+  return {
+    lines: output,
+    engine: engineName,
+    translated,
+    failed,
+    pendentes,
+    progresso,
+    error: firstError,
+  };
 }

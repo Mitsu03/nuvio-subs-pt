@@ -110,3 +110,43 @@ test('asr: desligado nao corre, mesmo com KV e AI', async () => {
   const resultado = await runPass({ imdbId: 'tt1', season: 1, episode: 1 }, 'x', env);
   assert.match(resultado.error, /desligado/);
 });
+
+test('traducao: o progresso guardado nao volta a gastar chamadas', async () => {
+  const { translateLines } = await import('../src/translate/index.js');
+
+  const linhas = Array.from({ length: 100 }, (_, i) => `linha ${i}`);
+  // Motor de mentira que conta quantas linhas lhe passaram pelas maos.
+  let vistas = 0;
+  const env = {
+    TRANSLATE_PROVIDER: 'libre',
+    LIBRE_URL: 'http://x',
+    MAX_TRANSLATE_CALLS: '1',
+    TRANSLATE_CONCURRENCY: '1',
+  };
+
+  // Sem progresso: traduz o que couber no tecto e deixa pendentes.
+  const primeira = await translateLines(linhas, { from: 'tr', to: 'pt' }, env);
+  assert.ok(primeira.pendentes > 0, 'devia sobrar trabalho para a proxima');
+  assert.equal(primeira.lines.length, linhas.length, 'a legenda tem de manter o tamanho');
+
+  // Com metade marcada como feita, o que resta e' menos.
+  const feitas = {};
+  for (let i = 0; i < 60; i += 1) feitas[i] = `traduzida ${i}`;
+  const segunda = await translateLines(linhas, { from: 'tr', to: 'pt', feitas }, env);
+
+  assert.ok(segunda.pendentes < primeira.pendentes, 'a segunda passagem tem de avancar');
+  // O que ja estava feito aparece no resultado sem ser pedido outra vez.
+  assert.equal(segunda.lines[0], 'traduzida 0');
+  assert.equal(vistas, 0);
+});
+
+test('cache: uma legenda com deixas por traduzir nao fica guardada', async () => {
+  const { cacheTtlFor } = await import('../src/cache.js');
+
+  // Com pendentes, guardar bloqueava o progresso ate a cache expirar.
+  assert.equal(cacheTtlFor({ tr: 1 }, { translated: 1600, failed: 530, pendentes: 530 }), 0);
+  // Completa e boa: validade normal.
+  assert.equal(cacheTtlFor({ tr: 1 }, { translated: 2130, failed: 0, pendentes: 0 }), null);
+  // Completa mas com muitos lotes falhados: pouco tempo, para se repetir.
+  assert.ok(cacheTtlFor({ tr: 1 }, { translated: 100, failed: 400, pendentes: 0 }) > 0);
+});

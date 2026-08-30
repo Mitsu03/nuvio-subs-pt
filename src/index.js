@@ -292,7 +292,7 @@ async function handleSubtitles(request, env, ctx, type, rawId) {
         const key = await cacheKey(prewarm, env);
         if (await readCache(key, env)) return;
         try {
-          const built = await buildSubtitle(prewarm, env);
+          const built = await buildSubtitle(prewarm, env, { progressKey: `${key}:tr` });
           const ttl = cacheTtlFor(prewarm, built);
           if (ttl !== 0) await writeCache(key, built.srt, env, ttl);
         } catch (error) {
@@ -390,7 +390,7 @@ async function handleSubFile(request, env, token) {
   if (cached) return new Response(cached, { headers: { ...headers, 'X-Cache': 'hit' } });
 
   try {
-    const built = await buildSubtitle(payload, env);
+    const built = await buildSubtitle(payload, env, { progressKey: `${key}:tr` });
     const ttl = cacheTtlFor(payload, built);
     if (ttl !== 0) await writeCache(key, built.srt, env, ttl);
 
