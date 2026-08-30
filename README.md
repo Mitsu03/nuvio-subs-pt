@@ -362,9 +362,10 @@ codificação, SRT final, cache e rejeição de token adulterado.
   de um vídeo do YouTube a partir da Cloudflare. Vai até ao fim: raspa a página,
   tenta cinco perfis de cliente no `youtubei/v1/player`, faz um pedido `Range`
   real ao `googlevideo` e lê a caixa `sidx` com os cortes dos fragmentos.
-  Medido em 30-08-2026: um vídeo comum passa (`206`, com um IP da Cloudflare
-  dentro do URL), mas os episódios dos canais turcos respondem
-  `LOGIN_REQUIRED` nos cinco clientes. Ver `PLANO.md`.
+  Medido em 30-08-2026, três corridas por vídeo: o player responde `OK` em 12
+  de 12 chamadas, e o *Kuruluş Osman* descarrega (`206`) com o IP da Cloudflare
+  dentro do URL. Fica um `403` intermitente na descarga, sistemático no
+  *Muhtemel Aşk*. Ver `PLANO.md`.
 
 ## O OpenSubtitles não descarrega a partir de datacentros
 

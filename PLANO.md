@@ -7,7 +7,7 @@ que há dúvida.
 
 ---
 
-## 1. Legendas a partir do áudio do próprio episódio — EM SUSPENSO
+## 1. Legendas a partir do áudio do próprio episódio — VIÁVEL, por continuar
 
 ### O problema, medido
 
@@ -41,58 +41,59 @@ preso ao IP da televisão.
 
 > **Corrigido pela experiência 0 (30-08-2026):** isto não impede o Worker de
 > extrair os *seus próprios* endereços, presos ao IP dele, e descarregar por
-> eles — foi medido a funcionar. O que trava é outra coisa. Ver abaixo.
+> eles — medido a funcionar repetidamente. Ver abaixo.
 
-> **Experiência 0 — feita em 30-08-2026. Resultado: não passa, mas não pela
-> razão que se esperava.**
+> **Experiência 0 — feita em 30-08-2026, e remedida no mesmo dia. A extração a
+> partir da Cloudflare funciona. A frente 1 é viável.**
 
 A sonda vive em `GET /probe/player/{videoId}` (`src/youtube/probe.js`): raspa a
 página, tira `INNERTUBE_API_KEY` + `visitorData`, chama `youtubei/v1/player`
 por cinco perfis de cliente e, se algum responder `OK`, tenta mesmo descarregar
 um bocado do `googlevideo` com `Range`. O veredito é o `206`, não o `status`.
 
-Medido, com o Worker publicado:
+**A primeira medição dizia o contrário, e estava errada.** Numa passagem única,
+os quatro episódios turcos responderam `LOGIN_REQUIRED` nos cinco clientes
+(«Bot olmadığınızı doğrulamak için oturum açın»), e daí saiu a conclusão de que
+havia uma barreira de autenticação. Três corridas por vídeo, horas depois,
+desfazem-na: **12 em 12 chamadas deram `playabilityStatus: OK` pelo cliente
+ANDROID**, sem exceção. O `LOGIN_REQUIRED` era transitório — provavelmente um
+estrangulamento por IP, não uma política sobre estes vídeos.
 
-| Vídeo | Do IP residencial | Da Cloudflare |
+Medido, com o Worker publicado, três corridas por vídeo:
+
+| Vídeo | player | descarga (3 corridas) |
 |---|---|---|
-| `dQw4w9WgXcQ` (vídeo comum, 3 min) | — | **`OK`**, descarga `206`, `ip=172.68.103.95` |
-| `QvZHtdpkybc` — *Muhtemel Aşk* 1. Bölüm | `OK`, descarga `206` | `LOGIN_REQUIRED` |
-| `53Q7ulvGdkU` — *Kuruluş Osman* 1. Bölüm 4K | — | `LOGIN_REQUIRED` |
-| `0fTJyCTwznM` — *Kuruluş Osman* 1. Bölüm | — | `LOGIN_REQUIRED` |
-| `1AuB0f2B56Q` — *Kuruluş Osman* 28. Bölüm 4K | — | `LOGIN_REQUIRED` |
-
-Os cinco clientes (`ANDROID`, `IOS`, `TVHTML5_SIMPLY_EMBEDDED_PLAYER`,
-`WEB_EMBEDDED_PLAYER`, `MWEB`) foram todos recusados nos episódios turcos. A
-razão que o YouTube devolve é literal: *«Bot olmadığınızı doğrulamak için oturum
-açın»* — «inicie sessão para confirmar que não é um bot».
+| `53Q7ulvGdkU` — *Kuruluş Osman* 1. Bölüm 4K | `OK` ×3 | **`206` ×3** |
+| `1AuB0f2B56Q` — *Kuruluş Osman* 28. Bölüm 4K | `OK` ×2 | **`206` ×2** (1 erro de rede) |
+| `0fTJyCTwznM` — *Kuruluş Osman* 1. Bölüm | `OK` ×3 | `403`, **`206`**, **`206`** |
+| `QvZHtdpkybc` — *Muhtemel Aşk* 1. Bölüm | `OK` ×3 | `403` ×3 |
+| `dQw4w9WgXcQ` — vídeo comum (controlo) | `OK` | **`206`**, `ip=172.68.103.95` |
 
 **O que isto corrige na premissa do plano.** Estava escrito que os endereços do
 `googlevideo` estão presos ao IP e que o Worker por isso nunca poderia
-descarregar. Está errado: o vídeo comum passou o circuito completo a partir da
-Cloudflare, com `ip=172.68.103.95` — um IP da própria Cloudflare — dentro do
-URL. Quando é o Worker a extrair, o endereço fica preso ao *Worker*, e a
-descarga passa. **A extração a partir de um datacentro funciona.**
+descarregar. É falso: o `ip=` dentro do URL é o do Worker (`172.68.103.96`)
+quando é o Worker a extrair, e a descarga passa. **Extrair e descarregar a
+partir de um datacentro funciona**, e para o *Kuruluş Osman* funciona de forma
+repetida.
 
-O que não funciona é a extração **destes** vídeos. O bloqueio é por vídeo e não
-por origem: os episódios dos canais de televisão turcos exigem sessão a partir
-de um IP não-residencial, e um vídeo qualquer não exige. A falha anterior com
-`UNPLAYABLE` era o sintoma antigo da mesma política; o `visitorData` que
-faltava não era a explicação toda.
+**O que fica por resolver.** O *Muhtemel Aşk* — que é justamente a série que
+motivou tudo, por não ter legendas em língua nenhuma — dá `403` na descarga nas
+três corridas, apesar de o player responder `OK`. Um dos vídeos do *Kuruluş
+Osman* deu `403` numa corrida e `206` nas outras duas, o que sugere que o `403`
+é intermitente e não uma propriedade do vídeo. Falta perceber se o do *Muhtemel
+Aşk* é do mesmo tipo (e cede com repetição) ou se tem causa própria.
 
-**Consequência.** A transcrição do áudio no Worker fica em suspenso, mas não
-por impossibilidade técnica — por uma barreira de autenticação. Duas portas
-ficaram abertas, e nenhuma delas foi tentada:
+**Consequência.** A frente 1 deixa de estar bloqueada por uma barreira de
+autenticação — essa não existe. O que falta é caracterizar o `403` da descarga
+e decidir a política de repetição. As duas portas abaixo continuam disponíveis
+como reserva, mas já não são o único caminho:
 
-1. **Cookies de sessão no Worker.** Se o pedido é «inicie sessão», uma cookie de
-   uma conta YouTube guardada como segredo pode destrancá-lo. É a via directa e
-   é também a arriscada: a conta pode ser marcada, e passa a haver uma
-   credencial pessoal dentro do Worker. Decisão do dono do projeto, não técnica.
-2. **O plugin extrai, o Worker transcreve.** O plugin já corre na televisão e já
-   obtém estes endereços com sucesso — é o que faz hoje para tocar. Não precisa
-   de mandar os 135 MB: com a `sidx` lida (ver abaixo, já medida), pode
-   descarregar um bloco de ~8 min (~7,7 MB) e mandar só esse. Continua a ser
-   ~128 MB para o episódio inteiro, mas espalhados e em segundo plano, e nada
-   disso atravessa o Worker duas vezes.
+1. **Cookies de sessão no Worker.** Se o `403` voltar a endurecer, uma cookie de
+   conta YouTube guardada como segredo destranca-o. É a via arriscada: a conta
+   pode ser marcada, e passa a haver uma credencial pessoal dentro do Worker.
+2. **O plugin extrai, o Worker transcreve.** O plugin já corre na televisão e
+   obtém estes endereços a partir de um IP residencial. Com a `sidx` lida, pode
+   mandar um bloco de ~8 min (~7,7 MB) de cada vez em vez dos 135 MB.
 
 **Os cortes estão medidos e o parser existe.** Para o *Muhtemel Aşk* 1. Bölüm,
 lido a partir do `indexRange` (`723-10774`), itag 140:
@@ -235,8 +236,9 @@ como o `streamRepository` e o `subtitleRepository` fazem para os deles. Logo o
 catálogo do addon turco tem mesmo de viver em `/turcas/catalog/...`, e é onde
 está.
 
-A **1** parou na experiência 0, com um «não» que vale mais do que um «não»
-seco: a extração a partir da Cloudflare funciona, os cortes do áudio estão
-medidos e o parser está escrito. Falta destrancar o acesso a estes vídeos
-concretos, e isso é uma decisão sobre credenciais, não um problema por
-resolver. Está tudo em «Consequência», acima.
+A **1** passou a experiência 0. A extração e a descarga a partir da Cloudflare
+funcionam, os cortes do áudio estão medidos e o parser está escrito. O primeiro
+veredito — «barreira de autenticação» — vinha de uma passagem única e não
+sobreviveu à repetição: doze chamadas seguidas deram `OK`. O que resta é
+caracterizar o `403` intermitente da descarga e decidir a política de
+repetição. Está tudo em «Consequência», acima.
