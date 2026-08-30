@@ -17,7 +17,8 @@ import { buildBatches, resolveEngineName, translateLines } from '../src/translat
 import { rankCandidates, scoreCandidate } from '../src/providers/index.js';
 import { cacheTtlFor, cacheKey } from '../src/cache.js';
 import { parseSkip, toMeta, buildCatalog } from '../src/catalogs.js';
-import { buildManifest } from '../src/manifest.js';
+import { buildSubsManifest, buildTurcasManifest } from '../src/manifest.js';
+import worker from '../src/index.js';
 import { isAnime } from '../src/anime.js';
 
 test('SRT: le blocos com CRLF, numeracao e timecodes com virgula', () => {
@@ -369,18 +370,62 @@ test('catalogos: o meta prefere o id IMDb e cai para tmdb quando nao ha', () => 
   assert.ok(!('background' in semImdb));
 });
 
-test('catalogos: sem chave TMDB nao ha catalogos no manifesto', () => {
-  const semChave = buildManifest({ PREFERRED_PT: 'pt' });
+test('catalogos: sem chave TMDB nao ha catalogos no manifesto turco', () => {
+  const semChave = buildTurcasManifest({ PREFERRED_PT: 'pt' });
   assert.deepEqual(semChave.catalogs, []);
   // Uma coleccao sempre vazia no ecra inicial e pior do que coleccao nenhuma.
   assert.ok(!semChave.resources.some((r) => r.name === 'catalog'));
-  assert.ok(semChave.resources.some((r) => r.name === 'subtitles'));
 
-  const comChave = buildManifest({ PREFERRED_PT: 'pt', TMDB_API_KEY: 'k' });
+  const comChave = buildTurcasManifest({ PREFERRED_PT: 'pt', TMDB_API_KEY: 'k' });
   assert.equal(comChave.catalogs.length, 2);
   assert.deepEqual(comChave.catalogs.map((c) => c.id), ['turcas-em-alta', 'turcas-populares']);
   assert.ok(comChave.catalogs.every((c) => c.type === 'series'));
   assert.ok(comChave.resources.some((r) => r.name === 'catalog'));
+});
+
+test('manifestos: os dois addons sao separados e nao se pisam', () => {
+  const env = { PREFERRED_PT: 'pt', TMDB_API_KEY: 'k' };
+  const subs = buildSubsManifest(env);
+  const turcas = buildTurcasManifest(env);
+
+  // Ids diferentes: o Nuvio guarda os addons por id, e dois iguais seriam o
+  // mesmo addon — instalar o segundo substituia o primeiro.
+  assert.notEqual(subs.id, turcas.id);
+  assert.equal(subs.id, 'com.nuvio.subs.pt');
+  assert.equal(turcas.id, 'com.nuvio.turcas.pt');
+
+  // O addon de legendas so tem legendas, mesmo com a chave TMDB posta.
+  assert.deepEqual(subs.resources.map((r) => r.name), ['subtitles']);
+  assert.deepEqual(subs.catalogs, []);
+
+  // E o turco nao anuncia legendas.
+  assert.ok(!turcas.resources.some((r) => r.name === 'subtitles'));
+});
+
+
+test('rotas: cada manifesto no seu endereco, e os recursos por baixo dele', async () => {
+  const env = { PREFERRED_PT: 'pt' };
+  const get = (path) => worker.fetch(new Request(`https://x.dev${path}`), env, {});
+
+  const subs = await (await get('/manifest.json')).json();
+  assert.equal(subs.id, 'com.nuvio.subs.pt');
+
+  const turcas = await (await get('/turcas/manifest.json')).json();
+  assert.equal(turcas.id, 'com.nuvio.turcas.pt');
+
+  // O Nuvio pede os recursos a partir da base do manifesto (verificado em
+  // `catalogRepository.buildCatalogUrl`), por isso o catalogo do addon turco
+  // tem de responder debaixo de `/turcas` — e nao apenas na raiz.
+  const catalogo = await (await get('/turcas/catalog/series/turcas-em-alta.json')).json();
+  assert.deepEqual(catalogo.metas, []);
+  assert.match(catalogo.error, /TMDB_API_KEY/);
+
+  // A rota antiga fica de pe para quem instalou a versao de manifesto unico.
+  const antiga = await (await get('/catalog/series/turcas-em-alta.json')).json();
+  assert.deepEqual(antiga.metas, []);
+
+  // O prefixo nao inventa rotas: `/turcas` sozinho continua a nao existir.
+  assert.equal((await get('/turcas')).status, 404);
 });
 
 test('catalogos: sem chave TMDB o catalogo responde vazio em vez de rebentar', async () => {

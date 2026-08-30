@@ -1,21 +1,34 @@
 /**
  * Worker do addon de legendas PT para o Nuvio.
  *
- * Rotas:
- *   GET /                                     pagina com o URL de instalacao
- *   GET /manifest.json                        manifesto do addon
- *   GET /stream/{type}/{id}.json              streams com audio turco
+ * Serve dois addons a partir do mesmo Worker. O Nuvio resolve os recursos a
+ * partir da base do manifesto (o URL de instalacao sem o `/manifest.json`), por
+ * isso o addon turco tem as rotas dele todas debaixo de `/turcas`.
+ *
+ * Addon de legendas (`com.nuvio.subs.pt`):
+ *   GET /                                     pagina com os enderecos
+ *   GET /manifest.json                        manifesto
  *   GET /subtitles/{type}/{id}.json           lista de legendas
  *   GET /subtitles/{type}/{id}/{extra}.json   idem, com extras do Stremio
  *   GET /sub/{token}.srt                      o ficheiro, ja tratado
- *   GET /plugin/manifest.json                 repositorio de plugins do NuvioTV
+ *
+ * Addon turco (`com.nuvio.turcas.pt`):
+ *   GET /turcas/manifest.json                 manifesto
+ *   GET /turcas/catalog/{type}/{id}.json      coleccoes turcas
+ *   GET /turcas/stream/{type}/{id}.json       streams com audio turco
+ *
+ * Plugin do NuvioTV (repositorio a parte, endereco proprio):
+ *   GET /plugin/manifest.json                 repositorio de plugins
  *   GET /plugin/video/{type}/{id}.json        qual e' o video oficial (so o plugin)
  *   GET /plugin/turcas-pt.js                  o plugin, com a origem injectada
  *   POST /dash                                guarda um manifesto DASH
  *   GET /dash/{id}.mpd                        serve-o ao leitor
+ *
+ * As rotas antigas sem prefixo (`/catalog/...`, `/stream/...`) continuam a
+ * responder: quem instalou a versao de manifesto unico ainda as pede.
  */
 
-import { buildManifest } from './manifest.js';
+import { buildSubsManifest, buildTurcasManifest, TURCAS_BASE } from './manifest.js';
 import { parseVideoId, resolveTmdbToImdb, episodeHint } from './ids.js';
 import { fetchJson } from './http.js';
 import { searchAllProviders, rankCandidates, PT_LANGS } from './providers/index.js';
@@ -312,7 +325,14 @@ export default {
       });
     }
 
-    if (path === '/manifest.json') return json(buildManifest(env));
+    if (path === '/manifest.json') return json(buildSubsManifest(env));
+    if (path === `${TURCAS_BASE}/manifest.json`) return json(buildTurcasManifest(env));
+
+    // Os recursos do addon turco chegam com o prefixo, os das instalacoes
+    // antigas sem ele. Uma so normalizacao evita duplicar cada rota.
+    const routePath = path.startsWith(`${TURCAS_BASE}/`)
+      ? path.slice(TURCAS_BASE.length)
+      : path;
 
     if (path === '/health') {
       return json({
@@ -330,7 +350,7 @@ export default {
     if (path === '/probe') return json(await runProbes(env));
 
     // /catalog/series/{id}.json e /catalog/series/{id}/skip=40.json
-    const catalog = path.match(/^\/catalog\/([^/]+)\/([^/]+?)(?:\/(.+?))?\.json$/);
+    const catalog = routePath.match(/^\/catalog\/([^/]+)\/([^/]+?)(?:\/(.+?))?\.json$/);
     if (catalog) {
       const [, catalogType, catalogId, extra] = catalog;
       if (catalogType !== 'series') return json({ metas: [] });
@@ -373,7 +393,7 @@ export default {
     if (subFile) return handleSubFile(request, env, subFile[1]);
 
     // Aceita a forma simples e a forma com extras do Stremio.
-    const stream = path.match(/^\/stream\/([^/]+)\/(.+?)(?:\/[^/]*)?\.json$/);
+    const stream = routePath.match(/^\/stream\/([^/]+)\/(.+?)(?:\/[^/]*)?\.json$/);
     if (stream) return handleStream(env, stream[1], stream[2]);
 
     const subtitles = path.match(/^\/subtitles\/([^/]+)\/(.+?)(?:\/[^/]*)?\.json$/);

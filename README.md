@@ -1,13 +1,43 @@
 # nuvio-subs-pt
 
-Addon para o Nuvio com duas coleções de séries turcas, streams com áudio turco
-e legendas em português — *Kuruluş Osman*, *Diriliş Ertuğrul*, *Teşkilat*,
-*Payitaht*.
+Um Cloudflare Worker que serve **dois addons** para o Nuvio: legendas em
+português para o catálogo todo, e duas coleções de séries turcas com streams de
+áudio turco — *Kuruluş Osman*, *Diriliş Ertuğrul*, *Teşkilat*, *Payitaht*.
 
-Corre como Cloudflare Worker e fala o protocolo de addons que o Nuvio já
-entende (o mesmo do Stremio), portanto instala-se colando um URL.
+Fala o protocolo de addons que o Nuvio já entende (o mesmo do Stremio),
+portanto instala-se colando um URL.
 
-## O problema que resolve
+## Dois addons, um Worker
+
+Até à versão 1.x isto era um addon só. Eram duas coisas de âmbitos diferentes
+debaixo do mesmo manifesto: quem queria legendas levava duas coleções turcas ao
+ecrã inicial sem as ter pedido, e quem queria as coleções levava um addon de
+legendas que talvez já tivesse.
+
+| | Legendas PT | Turcas PT |
+|---|---|---|
+| id | `com.nuvio.subs.pt` | `com.nuvio.turcas.pt` |
+| manifesto | `/manifest.json` | `/turcas/manifest.json` |
+| recursos | `subtitles` | `catalog`, `stream` |
+| serve | o catálogo inteiro | só séries e filmes turcos |
+| plugin do NuvioTV | — | `/plugin/manifest.json` |
+
+Os ids **têm** de ser diferentes: o Nuvio guarda os addons por id de manifesto,
+e dois com o mesmo id são o mesmo addon — instalar o segundo substituiria o
+primeiro.
+
+O prefixo `/turcas` também não é decoração. O Nuvio resolve os recursos a
+partir da base do manifesto (o URL de instalação sem o `/manifest.json`) —
+`catalogRepository.buildCatalogUrl` faz `${basePath}/catalog/...`, e o mesmo em
+`streamRepository` e `subtitleRepository`. Um manifesto em `/turcas/` obriga
+portanto o catálogo a viver em `/turcas/catalog/...`. As rotas antigas sem
+prefixo continuam a responder, para quem instalou a versão de manifesto único.
+
+**Migração.** Quem já tinha o addon instalado fica com **as legendas** e deixa
+de ver as coleções turcas: o id mudou, e não há forma de acrescentar o segundo
+addon por ele. Basta colar o segundo endereço.
+
+## Legendas: o problema que resolve
 
 Estas séries têm legendas portuguesas a conta-gotas. Medido no `tt11093718`
 (*Kuruluş Osman*, ~180 episódios) no momento em que este addon foi escrito:
@@ -24,7 +54,49 @@ addon não se limita a agregar: quando não existe legenda na língua preferida,
 vai buscar a melhor legenda inglesa (ou turca) e traduz, mantendo o *timing*
 intacto.
 
-## As duas coleções
+## Legendas: o que faz
+
+- **Agrega** SubDL e OpenSubtitles (este último só procura, quando corre na Cloudflare).
+- **Traduz** para PT quando não há legenda na língua preferida, com o motor
+  configurável e cache em KV — traduz-se uma vez por episódio, não por sessão.
+- **Corrige a codificação.** As legendas turcas vêm quase sempre em
+  windows-1254; lidas como UTF-8 ficam ilegíveis. O addon deteta e converte.
+- **Limpa a publicidade** que as fontes colam na primeira e na última deixa.
+- **Ordena por episódio.** Um nome de ficheiro que bata certo com `S01E05` pesa
+  mais do que um ficheiro popular mas genérico.
+- **Ignora anime.** É um addon para filmes e séries; o anime tem legendas PT em abundância e addons dedicados, e as entradas daqui só acrescentavam ruído. Reversível em `ANIME_POLICY`.
+- **Assina os URLs** que serve, para o endpoint não poder ser usado como proxy
+  aberto para hosts arbitrários.
+
+## Legendas: como se comporta
+
+A lista devolvida ao Nuvio traz, por esta ordem:
+
+1. `Português (PT) (auto, de Inglês)` — só aparece quando não há legenda real na
+   língua preferida;
+2. as legendas portuguesas reais encontradas, PT-PT antes de PT-BR;
+3. nada mais: o addon não devolve inglês nem turco como opção final.
+
+A tradução de um episódio típico (800 a 1200 deixas) são 25 a 30 chamadas ao
+tradutor, em paralelo. Medido em produção, num episódio de 1110 deixas:
+
+| | |
+|---|---|
+| lista de legendas | ~0,2 s |
+| tradução completa, sem cache | ~30 s |
+| com cache | ~0,06 s |
+
+O `PREWARM` arranca a tradução mal o Nuvio peça a lista, portanto quando
+escolhes a legenda ela já costuma estar pronta. Isto depende de a tradução
+caber na janela que a Cloudflare dá ao `waitUntil`: com `TRANSLATE_CONCURRENCY`
+a 6 o episódio levava 41 s e o prewarm não chegava a tempo; a 12 leva ~30 s e
+chega. Se baixares a concorrência, o prewarm deixa de cumprir.
+
+Se uma parte da tradução falhar — quota, tempo, modelo a portar-se mal — essas
+deixas ficam no texto de origem em vez de desaparecerem. A legenda continua
+sincronizada e utilizável; nunca se devolve um ficheiro desalinhado.
+
+## Turcas: as duas coleções
 
 `Turcas em Alta` e `Turcas Populares`, ambas do TMDB via
 `with_original_language=tr` — o filtro certo, porque por país apanharia
@@ -54,7 +126,7 @@ Ao mexer no que `toMeta` produz, incrementa `META_SHAPE_VERSION` em
 `src/catalogs.js`: essa constante entra na chave da cache, e sem isso a
 correção só chega aos utilizadores quando a cache expirar.
 
-## Streams com áudio turco
+## Turcas: streams com áudio turco
 
 O circuito de torrents não tem séries turcas em turco. Medido no `tt43351313`
 (*Muhtemel Aşk*, Show TV, estreada em Junho de 2026):
@@ -73,7 +145,7 @@ inteiros no YouTube, de graça e sem bloqueio por país. O addon procura lá e
 devolve o que encontra:
 
 ```
-/stream/series/tt11093718:2:1.json
+/turcas/stream/series/tt11093718:2:1.json
 → Kuruluş Osman | 28. Bölüm (4K Ultra HD) · Canal: Kuruluş Osman · 2h22
 → Kuruluş Osman 28. Bölüm            · Canal: Kuruluş Osman · 2h22
 → Kuruluş Osman 28. Bölüm            · Canal: atv           · 2h22
@@ -117,7 +189,7 @@ O recurso só responde a obras com turco como língua original (é o TMDB que o
 diz) e só aparece no manifesto quando há `TMDB_API_KEY`. Para tudo o resto
 devolve lista vazia, para não acrescentar ruído a séries que já têm fontes.
 
-## O plugin do NuvioTV (é aqui que toca dentro da app)
+## Turcas: o plugin do NuvioTV (é aqui que toca dentro da app)
 
 O recurso `stream` acima não serve o NuvioTV. O que serve é um **plugin**: o
 NuvioTV instala scrapers JS de um repositório e corre-os **no próprio
@@ -178,23 +250,6 @@ domínio, um documento a apontar para onde quem chamasse quisesse. O XML é
 escrito no Worker e nunca copiado da entrada. Os manifestos vivem 6 horas, que é
 quando os endereços do googlevideo expiram.
 
-## O que faz
-
-- **Agrega** SubDL e OpenSubtitles (este último só procura, quando corre na Cloudflare).
-- **Traduz** para PT quando não há legenda na língua preferida, com o motor
-  configurável e cache em KV — traduz-se uma vez por episódio, não por sessão.
-- **Corrige a codificação.** As legendas turcas vêm quase sempre em
-  windows-1254; lidas como UTF-8 ficam ilegíveis. O addon deteta e converte.
-- **Limpa a publicidade** que as fontes colam na primeira e na última deixa.
-- **Ordena por episódio.** Um nome de ficheiro que bata certo com `S01E05` pesa
-  mais do que um ficheiro popular mas genérico.
-- **Ignora anime.** É um addon para filmes e séries; o anime tem legendas PT em abundância e addons dedicados, e as entradas daqui só acrescentavam ruído. Reversível em `ANIME_POLICY`.
-- **Encontra o episódio turco.** Para séries e filmes turcos devolve o episódio
-  completo publicado pelo canal oficial no YouTube — a única fonte com áudio
-  turco de verdade.
-- **Assina os URLs** que serve, para o endpoint não poder ser usado como proxy
-  aberto para hosts arbitrários.
-
 ## Instalar
 
 Precisas de uma conta Cloudflare (o plano gratuito chega).
@@ -221,10 +276,17 @@ npx wrangler deploy
 ```
 
 Depois abre `https://nuvio-subs-pt.<o-teu-subdominio>.workers.dev/` — a página
-mostra o URL de instalação e o estado da configuração.
+mostra os três endereços e o estado da configuração.
 
-No Nuvio: **Definições → Addons → Adicionar addon**, e cola o
-`.../manifest.json`.
+No Nuvio, **Definições → Addons → Adicionar addon**, e cola um ou os dois:
+
+```
+https://nuvio-subs-pt.<o-teu-subdominio>.workers.dev/manifest.json         legendas
+https://nuvio-subs-pt.<o-teu-subdominio>.workers.dev/turcas/manifest.json  coleções turcas
+```
+
+O plugin do NuvioTV é um terceiro endereço e entra noutro sítio — **Definições
+→ Plugins**, não Addons. Ver a secção do plugin.
 
 ## Configuração
 
@@ -267,38 +329,10 @@ precisamente de IPs partilhados.
 `deepl` dá o melhor português europeu, mas o plano gratuito são 500 mil
 caracteres por mês, o que dá para uns 15 a 20 episódios destes.
 
-## Como se comporta
-
-A lista devolvida ao Nuvio traz, por esta ordem:
-
-1. `Português (PT) (auto, de Inglês)` — só aparece quando não há legenda real na
-   língua preferida;
-2. as legendas portuguesas reais encontradas, PT-PT antes de PT-BR;
-3. nada mais: o addon não devolve inglês nem turco como opção final.
-
-A tradução de um episódio típico (800 a 1200 deixas) são 25 a 30 chamadas ao
-tradutor, em paralelo. Medido em produção, num episódio de 1110 deixas:
-
-| | |
-|---|---|
-| lista de legendas | ~0,2 s |
-| tradução completa, sem cache | ~30 s |
-| com cache | ~0,06 s |
-
-O `PREWARM` arranca a tradução mal o Nuvio peça a lista, portanto quando
-escolhes a legenda ela já costuma estar pronta. Isto depende de a tradução
-caber na janela que a Cloudflare dá ao `waitUntil`: com `TRANSLATE_CONCURRENCY`
-a 6 o episódio levava 41 s e o prewarm não chegava a tempo; a 12 leva ~30 s e
-chega. Se baixares a concorrência, o prewarm deixa de cumprir.
-
-Se uma parte da tradução falhar — quota, tempo, modelo a portar-se mal — essas
-deixas ficam no texto de origem em vez de desaparecerem. A legenda continua
-sincronizada e utilizável; nunca se devolve um ficheiro desalinhado.
-
 ## Desenvolvimento
 
 ```bash
-npm test                       # 62 testes, sem rede
+npm test                       # 65 testes, sem rede
 node scripts/smoke.mjs         # ponta-a-ponta contra as fontes reais
 node scripts/smoke.mjs tt11093718:2:10
 npm run build:plugin           # embute plugin/turcas-pt.js no Worker
@@ -313,11 +347,12 @@ codificação, SRT final, cache e rejeição de token adulterado.
 ## Diagnóstico
 
 - `/health` — motor de tradução ativo, KV, chave de assinatura, fontes.
+- `/manifest.json` e `/turcas/manifest.json` — os dois manifestos, para confirmar que os ids são mesmo diferentes.
 - `/subtitles/series/tt11093718:1:1.json` — o que existe para um episódio.
 - Cabeçalhos em `/sub/*.srt`: `X-Cache`, `X-Translate-Engine` e
   `X-Translate-Stats` (deixas traduzidas / total) e `X-Translate-Error`.
-- `/catalog/series/turcas-em-alta.json` — a coleção crua, com `?skip=20` para paginar.
-- `/stream/series/tt11093718:2:1.json` — o episódio no canal oficial. Devolver
+- `/turcas/catalog/series/turcas-em-alta.json` — a coleção crua, com `?skip=20` para paginar.
+- `/turcas/stream/series/tt11093718:2:1.json` — o episódio no canal oficial. Devolver
   lista vazia aqui e não vazia numa série da primeira temporada é o sintoma de
   o TMDB contar as temporadas de forma diferente da emissão.
 - `/plugin/manifest.json` — o repositório de plugins que o NuvioTV instala.

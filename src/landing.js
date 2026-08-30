@@ -1,11 +1,11 @@
-/** Pagina simples com o URL de instalacao e o estado da configuracao. */
+/** Pagina simples com os enderecos de instalacao e o estado da configuracao. */
 
-import { buildManifest } from './manifest.js';
+import { buildSubsManifest, buildTurcasManifest, TURCAS_BASE } from './manifest.js';
 import { resolveEngineName } from './translate/index.js';
 
 export function renderLandingPage(origin, env) {
-  const manifest = buildManifest(env);
-  const manifestUrl = `${origin}/manifest.json`;
+  const subs = buildSubsManifest(env);
+  const turcas = buildTurcasManifest(env);
   const engine = resolveEngineName(env) || 'desligado';
 
   const checks = [
@@ -13,6 +13,7 @@ export function renderLandingPage(origin, env) {
     ['Cache KV', Boolean(env.SUBS)],
     ['Fonte SubDL', Boolean(env.SUBDL_API_KEY)],
     ['Resolucao de ids TMDB', Boolean(env.TMDB_API_KEY)],
+    ['Coleccoes turcas', turcas.catalogs.length > 0],
     ['Streams turcos (YouTube oficial)', Boolean(env.TMDB_API_KEY) && env.STREAMS !== '0'],
   ]
     .map(([label, ok]) => `<li>${ok ? 'ok' : 'em falta'} &mdash; ${label}</li>`)
@@ -35,7 +36,7 @@ export function renderLandingPage(origin, env) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${manifest.name}</title>
+<title>Turcas PT &amp; Legendas PT</title>
 <style>
   :root { color-scheme: light dark; }
   body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1.25rem; line-height: 1.6; }
@@ -46,24 +47,42 @@ export function renderLandingPage(origin, env) {
 </style>
 </head>
 <body>
-<h1>${manifest.name}</h1>
-<p>${manifest.description}</p>
+<h1>Legendas PT &amp; Turcas PT</h1>
+<p>Dois addons independentes servidos do mesmo sitio. Instala so o que queres:
+as legendas servem o catalogo inteiro, as coleccoes so servem series turcas.</p>
 ${blocked}
+
 <h2>Instalar</h2>
-<p>Sao dois enderecos e dois sitios diferentes. Trocar os dois da o erro
-<code>manifest missing id</code>: o parser de addons exige um campo <code>id</code>
-que o formato de plugins nao tem.</p>
+<p>Sao tres enderecos e dois sitios diferentes nas definicoes. Meter um endereco
+de addon no ecra dos plugins da o erro <code>manifest missing id</code>: o parser
+de addons exige um campo <code>id</code> que o formato de plugins nao tem.</p>
 
-<h3>1. Addon &mdash; legendas e coleccoes</h3>
+<h3>1. Legendas PT &mdash; legendas para tudo</h3>
+<p>${subs.description}</p>
 <p>Definicoes &rarr; <strong>Addons</strong> &rarr; Adicionar addon:</p>
-<p><code>${manifestUrl}</code></p>
+<p><code>${origin}/manifest.json</code></p>
 
-<h3>2. Plugin &mdash; video turco na TV</h3>
-<p>So no NuvioTV. Definicoes &rarr; <strong>Plugins</strong> (&laquo;Manage local
-scrapers and providers&raquo;) &rarr; <strong>Add repository</strong>:</p>
+<h3>2. Turcas PT &mdash; coleccoes de series turcas</h3>
+<p>${turcas.description}</p>
+<p>Definicoes &rarr; <strong>Addons</strong> &rarr; Adicionar addon:</p>
+<p><code>${origin}${TURCAS_BASE}/manifest.json</code></p>
+<p class="hint">Endereco diferente e <em>id</em> diferente
+(<code>${turcas.id}</code>), por isso os dois convivem sem se substituirem.</p>
+
+<h3>3. Plugin &mdash; video turco na TV</h3>
+<p>So no NuvioTV, e so faz sentido com o addon 2. Definicoes &rarr;
+<strong>Plugins</strong> (&laquo;Manage local scrapers and providers&raquo;) &rarr;
+<strong>Add repository</strong>:</p>
 <p><code>${origin}/plugin/manifest.json</code></p>
 <p class="hint">Confirma que <em>Enable plugin providers globally</em> esta ligado,
 ou o Nuvio instala o plugin e nunca o chama.</p>
+
+<h2>Ja tinhas a versao antiga?</h2>
+<p>Ate a versao 1.x isto era um addon so, com as legendas e as coleccoes juntas.
+Quem o tem instalado fica com <strong>as legendas</strong> e deixa de ver as
+coleccoes turcas: para as ter de volta, acrescenta o endereco 2 a mao. Nao ha
+maneira de o fazer automaticamente &mdash; o Nuvio guarda os addons por
+<code>id</code> de manifesto, e o addon turco tem agora um id proprio.</p>
 
 <h2>Estado</h2>
 <ul>${checks}</ul>
@@ -73,7 +92,8 @@ ou o Nuvio instala o plugin e nunca o chama.</p>
 <p class="hint">
   <a href="/health">/health</a> mostra a configuracao em JSON.<br>
   <code>${origin}/subtitles/series/tt11093718:1:1.json</code> lista o que existe para o primeiro episodio do Kurulus Osman.<br>
-  <code>${origin}/stream/series/tt11093718:1:1.json</code> mostra o mesmo episodio no canal oficial.
+  <code>${origin}${TURCAS_BASE}/stream/series/tt11093718:1:1.json</code> mostra o mesmo episodio no canal oficial.<br>
+  <code>${origin}${TURCAS_BASE}/catalog/series/turcas-em-alta.json</code> mostra a coleccao Em Alta.
 </p>
 </body>
 </html>`;

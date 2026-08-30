@@ -1,7 +1,7 @@
 {
   "name": "nuvio-subs-pt",
   "version": "1.0.0",
-  "description": "Addon de legendas em portugues para o Nuvio, afinado para series turcas (Kurulus Osman, Dirilis Ertugrul, Teskilat, ...). Agrega fontes reais e traduz automaticamente quando nao existe legenda PT.",
+  "description": "Dois addons para o Nuvio num so Worker: legendas em portugues para todo o catalogo (agrega fontes reais e traduz quando nao ha legenda PT), e coleccoes de series turcas com streams de audio turco.",
   "private": true,
   "type": "module",
   "main": "src/index.js",
