@@ -22,7 +22,17 @@ import { payloadUrls } from './token.js';
  * @param {object} payload  conteudo do token assinado
  * @returns {Promise<{ cues: Array, encoding: string }>}
  */
-export async function loadCues(payload) {
+export async function loadCues(payload, env) {
+  // Legenda vinda da transcricao do audio: o texto ja esta em KV, escrito pelo
+  // `src/asr/`. Nao ha nada para descarregar nem codificacao para adivinhar.
+  if (payload.asr) {
+    const text = env && env.SUBS ? await env.SUBS.get(payload.asr).catch(() => null) : null;
+    if (!text) throw new Error('a transcricao ainda nao esta pronta');
+    const cues = parseSubtitle(text);
+    if (cues.length === 0) throw new Error('transcricao vazia');
+    return { cues, encoding: 'utf-8', url: payload.asr };
+  }
+
   // As origens sao tentadas por ordem. Uma fonte pode responder bem a busca e
   // recusar a descarga — o dl.opensubtitles.org devolve 401 a pedidos vindos de
   // IPs de datacentro, por exemplo — por isso uma falha faz seguir para a
@@ -59,7 +69,7 @@ export async function loadCues(payload) {
  * @returns {Promise<{ srt: string, engine: string|null, translated: number, failed: number }>}
  */
 export async function buildSubtitle(payload, env) {
-  const { cues } = await loadCues(payload);
+  const { cues } = await loadCues(payload, env);
 
   if (!payload.tr) {
     return { srt: serializeSrt(cues), engine: null, translated: 0, failed: 0 };

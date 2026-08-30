@@ -54,6 +54,40 @@ addon não se limita a agregar: quando não existe legenda na língua preferida,
 vai buscar a melhor legenda inglesa (ou turca) e traduz, mantendo o *timing*
 intacto.
 
+## Legendas: a partir do áudio (construído, desligado)
+
+Para séries acabadas de estrear não há legenda em língua nenhuma — nem
+portuguesa, nem inglesa, nem turca, nem legendas automáticas do YouTube. Sem
+texto de partida o tradutor não tem o que traduzir, e `/subtitles` devolve lista
+vazia. Medido no `tt43351313` (*Muhtemel Aşk*): zero em todas as fontes.
+
+`src/asr/` transcreve o áudio turco do próprio episódio com o Whisper (Workers
+AI) e mete o resultado no tradutor que já existe. Está escrito, testado e
+integrado — a entrada aparece como `Português (PT) (auto, do áudio)` e só
+quando não há mais nada.
+
+**Vem desligado (`ASR = "0"`), e não por estar incompleto.** O que falha é o
+acesso. Medido a partir do Worker:
+
+| O que se pediu ao `googlevideo` | Resposta |
+|---|---|
+| primeiro 1 MB, a meio do ficheiro | `206` |
+| 4 MB de uma vez | `403` |
+| 1 MB, e outro 1 MB seguido | `206`, depois `403` |
+| `youtubei/v1/player` logo a seguir | `LOGIN_REQUIRED` nos cinco clientes |
+
+É estrangulamento por IP, nos dois sítios. Um episódio são 128 MB e o
+`googlevideo` serve 1 MB de cada vez; a defesa entra ao segundo pedido. Pior: o
+IP queimado é o mesmo que serve os streams turcos, portanto ligar isto estraga
+o que já funciona.
+
+O caminho que resta é o plugin descarregar os blocos na televisão, de um IP
+residencial, e enviá-los ao Worker — o `src/asr/` fica igual, só muda quem faz
+a descarga. Ver `PLANO.md`.
+
+Diagnóstico: `GET /asr/{type}/{id}.json` mostra o estado; `?run=N` corre uma
+passagem e devolve o erro no corpo em vez de o perder nos registos.
+
 ## Legendas: o que faz
 
 - **Agrega** SubDL e OpenSubtitles (este último só procura, quando corre na Cloudflare).
@@ -332,7 +366,7 @@ caracteres por mês, o que dá para uns 15 a 20 episódios destes.
 ## Desenvolvimento
 
 ```bash
-npm test                       # 65 testes, sem rede
+npm test                       # 75 testes, sem rede
 node scripts/smoke.mjs         # ponta-a-ponta contra as fontes reais
 node scripts/smoke.mjs tt11093718:2:10
 npm run build:plugin           # embute plugin/turcas-pt.js no Worker

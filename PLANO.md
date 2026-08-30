@@ -7,7 +7,7 @@ que há dúvida.
 
 ---
 
-## 1. Legendas a partir do áudio do próprio episódio — VIÁVEL, por continuar
+## 1. Legendas a partir do áudio — CONSTRUÍDO, bloqueado pelo acesso
 
 ### O problema, medido
 
@@ -43,57 +43,78 @@ preso ao IP da televisão.
 > extrair os *seus próprios* endereços, presos ao IP dele, e descarregar por
 > eles — medido a funcionar repetidamente. Ver abaixo.
 
-> **Experiência 0 — feita em 30-08-2026, e remedida no mesmo dia. A extração a
-> partir da Cloudflare funciona. A frente 1 é viável.**
+> **Experiência 0 — feita, remedida, e depois construída até bater no muro.
+> Resultado: o código funciona; o acesso é que não escala.**
 
-A sonda vive em `GET /probe/player/{videoId}` (`src/youtube/probe.js`): raspa a
-página, tira `INNERTUBE_API_KEY` + `visitorData`, chama `youtubei/v1/player`
-por cinco perfis de cliente e, se algum responder `OK`, tenta mesmo descarregar
-um bocado do `googlevideo` com `Range`. O veredito é o `206`, não o `status`.
+A sonda vive em `GET /probe/player/{videoId}` e a implementação em `src/asr/`.
+Ambas ficam no repositório, com o `ASR` desligado no `wrangler.toml`.
 
-**A primeira medição dizia o contrário, e estava errada.** Numa passagem única,
-os quatro episódios turcos responderam `LOGIN_REQUIRED` nos cinco clientes
-(«Bot olmadığınızı doğrulamak için oturum açın»), e daí saiu a conclusão de que
-havia uma barreira de autenticação. Três corridas por vídeo, horas depois,
-desfazem-na: **12 em 12 chamadas deram `playabilityStatus: OK` pelo cliente
-ANDROID**, sem exceção. O `LOGIN_REQUIRED` era transitório — provavelmente um
-estrangulamento por IP, não uma política sobre estes vídeos.
+### O que se mediu, por esta ordem
 
-Medido, com o Worker publicado, três corridas por vídeo:
+**Primeira passagem.** Os quatro episódios turcos responderam `LOGIN_REQUIRED`
+nos cinco perfis de cliente. Conclusão registada na altura: barreira de
+autenticação. **Errada.**
 
-| Vídeo | player | descarga (3 corridas) |
-|---|---|---|
-| `53Q7ulvGdkU` — *Kuruluş Osman* 1. Bölüm 4K | `OK` ×3 | **`206` ×3** |
-| `1AuB0f2B56Q` — *Kuruluş Osman* 28. Bölüm 4K | `OK` ×2 | **`206` ×2** (1 erro de rede) |
-| `0fTJyCTwznM` — *Kuruluş Osman* 1. Bölüm | `OK` ×3 | `403`, **`206`**, **`206`** |
-| `QvZHtdpkybc` — *Muhtemel Aşk* 1. Bölüm | `OK` ×3 | `403` ×3 |
-| `dQw4w9WgXcQ` — vídeo comum (controlo) | `OK` | **`206`**, `ip=172.68.103.95` |
+**Segunda passagem**, três corridas por vídeo, horas depois: 12 em 12 chamadas
+deram `OK`, e o *Kuruluş Osman* descarregou (`206`, `ip=172.68.103.95` — um IP
+da própria Cloudflare dentro do URL). Conclusão registada: viável. **Também
+errada, mas por menos.**
 
-**O que isto corrige na premissa do plano.** Estava escrito que os endereços do
-`googlevideo` estão presos ao IP e que o Worker por isso nunca poderia
-descarregar. É falso: o `ip=` dentro do URL é o do Worker (`172.68.103.96`)
-quando é o Worker a extrair, e a descarga passa. **Extrair e descarregar a
-partir de um datacentro funciona**, e para o *Kuruluş Osman* funciona de forma
-repetida.
+**Terceira passagem**, já com o descarregador escrito e a pedir a sério:
 
-**O que fica por resolver.** O *Muhtemel Aşk* — que é justamente a série que
-motivou tudo, por não ter legendas em língua nenhuma — dá `403` na descarga nas
-três corridas, apesar de o player responder `OK`. Um dos vídeos do *Kuruluş
-Osman* deu `403` numa corrida e `206` nas outras duas, o que sugere que o `403`
-é intermitente e não uma propriedade do vídeo. Falta perceber se o do *Muhtemel
-Aşk* é do mesmo tipo (e cede com repetição) ou se tem causa própria.
+| O que se pediu | Resposta |
+|---|---|
+| primeiro 1 MB, a meio do ficheiro | `206` |
+| 4 MB de uma vez | `403` |
+| 1 MB, depois outro 1 MB seguido | `206`, depois **`403`** |
+| `youtubei/v1/player`, logo a seguir | **`LOGIN_REQUIRED`**, nos cinco clientes |
+| o mesmo, quatro minutos depois | ainda `LOGIN_REQUIRED` |
 
-**Consequência.** A frente 1 deixa de estar bloqueada por uma barreira de
-autenticação — essa não existe. O que falta é caracterizar o `403` da descarga
-e decidir a política de repetição. As duas portas abaixo continuam disponíveis
-como reserva, mas já não são o único caminho:
+### O que isto quer dizer
 
-1. **Cookies de sessão no Worker.** Se o `403` voltar a endurecer, uma cookie de
-   conta YouTube guardada como segredo destranca-o. É a via arriscada: a conta
-   pode ser marcada, e passa a haver uma credencial pessoal dentro do Worker.
-2. **O plugin extrai, o Worker transcreve.** O plugin já corre na televisão e
-   obtém estes endereços a partir de um IP residencial. Com a `sidx` lida, pode
-   mandar um bloco de ~8 min (~7,7 MB) de cada vez em vez dos 135 MB.
+As três medições não se contradizem: descrevem um **estrangulamento por IP**. O
+`403` na descarga e o `LOGIN_REQUIRED` no player são a mesma defesa, em dois
+sítios. Os resultados «intermitentes» das duas primeiras passagens eram função
+do que se tinha pedido antes — e não de sorte.
+
+A premissa original do plano continua desmentida: o `ip=` no URL é o do Worker
+quando é o Worker a extrair, e a descarga passa. **Extrair de um datacentro
+funciona.** O que não funciona é fazê-lo **à escala necessária**: um episódio
+são 128 MB, o googlevideo serve 1 MB de cada vez, e a defesa entra ao segundo
+pedido. Não há aqui uma afinação que resolva — o volume é o problema.
+
+**E tem um custo colateral.** O IP que o ASR queima é o mesmo que serve os
+streams turcos. Ligar isto degrada uma funcionalidade que hoje funciona.
+
+### O que ficou construído, e serve
+
+O código está escrito, testado e correto — o que falha é o acesso, não ele:
+
+| Módulo | O que faz |
+|---|---|
+| `src/youtube/sidx.js` | lê a caixa `sidx` e devolve as fronteiras dos fragmentos |
+| `src/asr/audio.js` | extrai o endereço, corta em blocos, descarrega em pedaços de 1 MB |
+| `src/asr/whisper.js` | transcreve um bloco, com modelos de reserva |
+| `src/asr/index.js` | passagens incrementais com estado em KV e orçamento de subpedidos |
+| `src/index.js` | oferece `Português (PT) (auto, do áudio)` quando não há mais nada |
+| `GET /asr/{type}/{id}.json` | estado da transcrição; `?run=N` corre uma passagem |
+
+Dez testes cobrem as chaves de KV, o corte em blocos, os deslocamentos de
+tempo, a leitura da transcrição a partir de KV e as recusas (sem KV, desligado,
+transcrição por fazer).
+
+### O caminho que resta
+
+**O plugin descarrega, o Worker transcreve.** O plugin já corre na televisão,
+de um IP residencial, e já extrai estes endereços com sucesso — é o que faz
+hoje para tocar. Com a `sidx` lida, pode descarregar um bloco e enviá-lo ao
+Worker, que o transcreve e devolve. O `src/asr/` fica igual: só muda quem faz a
+descarga.
+
+A outra porta — **cookies de sessão no Worker** — não resolve isto. Destranca o
+`LOGIN_REQUIRED` do player, mas o `403` da descarga é estrangulamento de
+tráfego, e uma conta autenticada a puxar 128 MB de um IP de datacentro é um
+candidato ainda melhor a ser marcada.
 
 **Os cortes estão medidos e o parser existe.** Para o *Muhtemel Aşk* 1. Bölüm,
 lido a partir do `indexRange` (`723-10774`), itag 140:
@@ -236,9 +257,12 @@ como o `streamRepository` e o `subtitleRepository` fazem para os deles. Logo o
 catálogo do addon turco tem mesmo de viver em `/turcas/catalog/...`, e é onde
 está.
 
-A **1** passou a experiência 0. A extração e a descarga a partir da Cloudflare
-funcionam, os cortes do áudio estão medidos e o parser está escrito. O primeiro
-veredito — «barreira de autenticação» — vinha de uma passagem única e não
-sobreviveu à repetição: doze chamadas seguidas deram `OK`. O que resta é
-caracterizar o `403` intermitente da descarga e decidir a política de
-repetição. Está tudo em «Consequência», acima.
+A **1** está construída e desligada. Levou três vereditos até assentar, e os
+dois primeiros estavam errados: «barreira de autenticação» veio de uma passagem
+única; «viável» veio de repetir só a parte barata. Só ao pedir megabytes a
+sério apareceu o que estava lá desde o início — um estrangulamento por IP, que
+o volume de um episódio inteiro aciona sempre.
+
+A lição para a próxima experiência: medir na escala do uso real, e não na de
+uma sonda. Uma sonda que pede 11 KB não descobre um limite que só aparece ao
+segundo megabyte.

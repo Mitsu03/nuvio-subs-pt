@@ -39,6 +39,7 @@ import { resolveEngineName } from './translate/index.js';
 import { renderLandingPage } from './landing.js';
 import { runProbes } from './probe.js';
 import { probePlayer } from './youtube/probe.js';
+import { isEnabled as asrEnabled, readTranscript, readState, asrKey, runPass } from './asr/index.js';
 import { buildCatalog, parseSkip } from './catalogs.js';
 import { isAnime } from './anime.js';
 import { buildStreams } from './streams/index.js';
@@ -93,6 +94,9 @@ async function entryFor(candidate, video, env, request, options = {}) {
     .slice(0, 5);
 
   const payload = {
+    // Uma legenda vinda da transcricao nao tem origem para descarregar: leva a
+    // chave de KV onde o texto turco ficou.
+    ...(candidate.asr ? { asr: candidate.asr } : {}),
     urls,
     lang: options.targetLang || candidate.lang,
     src: options.translate ? candidate.lang : '',
@@ -104,9 +108,14 @@ async function entryFor(candidate, video, env, request, options = {}) {
   const token = await signToken(payload, env.SIGNING_KEY);
   const origin = new URL(request.url).origin;
 
-  const label = options.translate
-    ? `${LANG_LABEL[payload.lang] || payload.lang} (auto, de ${LANG_LABEL[candidate.lang] || candidate.lang})`
-    : `${LANG_LABEL[payload.lang] || payload.lang} - ${candidate.provider}`;
+  // O utilizador tem de saber o que esta a ler: uma transcricao automatica de
+  // audio turco erra nomes proprios de dizi historico, e uma legenda humana,
+  // mesmo em ingles, vale mais.
+  const label = candidate.asr
+    ? `${LANG_LABEL[payload.lang] || payload.lang} (auto, do audio)`
+    : options.translate
+      ? `${LANG_LABEL[payload.lang] || payload.lang} (auto, de ${LANG_LABEL[candidate.lang] || candidate.lang})`
+      : `${LANG_LABEL[payload.lang] || payload.lang} - ${candidate.provider}`;
 
   return {
     entry: {
@@ -204,6 +213,38 @@ async function handleSubtitles(request, env, ctx, type, rawId) {
     }
   }
 
+  // Ultimo recurso: transcrever o audio do proprio episodio.
+  //
+  // So corre quando nao existe legenda real em lingua nenhuma — nem portuguesa,
+  // nem inglesa, nem turca. Uma legenda humana, mesmo em ingles, vale sempre
+  // mais do que uma transcricao automatica, e por isso esta entrada nunca
+  // compete com as outras: ou nao ha nada, ou nao aparece.
+  //
+  // E' o caso do *Muhtemel Ask*: zero ficheiros no OpenSubtitles, zero faixas
+  // no video oficial, nem legendas automaticas do YouTube. Sem isto, o addon
+  // devolve lista vazia — que era a resposta certa, mas nao ajudava ninguem.
+  let arrancarAsr = false;
+
+  if (asrEnabled(env) && candidates.length === 0 && !anime) {
+    const pronta = await readTranscript(video, env);
+
+    if (pronta) {
+      const { entry } = await entryFor(
+        { id: 'asr-audio', lang: 'tr', asr: asrKey(video), provider: 'audio' },
+        video,
+        env,
+        request,
+        { translate: true, targetLang: preferred },
+      );
+      subtitles.unshift(entry);
+    } else {
+      // Ainda nao ha nada para servir. A transcricao arranca em segundo plano e
+      // a legenda aparece num pedido seguinte — sao 18 blocos por episodio e
+      // nao cabem todos na janela de um pedido.
+      arrancarAsr = true;
+    }
+  }
+
   // A traducao demora; aquece-se a cache em segundo plano para o leitor nao
   // ficar a espera quando o utilizador escolher a entrada.
   if (prewarm && env.PREWARM !== '0' && ctx && typeof ctx.waitUntil === 'function') {
@@ -219,6 +260,27 @@ async function handleSubtitles(request, env, ctx, type, rawId) {
           // O aquecimento e oportunista e nunca afecta a resposta, mas engolir
           // o erro em silencio ja custou dois diagnosticos as cegas.
           console.error('prewarm falhou:', error && error.message);
+        }
+      })(),
+    );
+  }
+
+  // Uma passagem de transcricao por pedido. O estado fica em KV, por isso cada
+  // visita ao episodio avanca mais um pedaco ate estar completo.
+  if (arrancarAsr && ctx && typeof ctx.waitUntil === 'function') {
+    ctx.waitUntil(
+      (async () => {
+        try {
+          const streams = await buildStreams(video, env);
+          const ytId = (streams.streams || []).map((item) => item.ytId).filter(Boolean)[0];
+          // Sem video oficial nao ha audio para transcrever, e a obra
+          // provavelmente nem e' turca.
+          if (!ytId) return;
+
+          const resultado = await runPass(video, ytId, env);
+          console.log('asr', asrKey(video), JSON.stringify(resultado));
+        } catch (error) {
+          console.error('asr falhou:', error && error.message);
         }
       })(),
     );
@@ -349,6 +411,56 @@ export default {
     }
 
     if (path === '/probe') return json(await runProbes(env));
+
+    // Estado da transcricao de um episodio: pronto, a meio, ou por comecar.
+    // Sem isto, um trabalho que corre em segundo plano durante varios pedidos
+    // e' invisivel a quem espera pela legenda.
+    const asrStatus = path.match(/^\/asr\/([^/]+)\/(.+?)\.json$/);
+    if (asrStatus) {
+      const alvo = parseVideoId(asrStatus[2], asrStatus[1]);
+      if (!alvo) return json({ error: 'id nao reconhecido' }, 400);
+      if (!alvo.imdbId && alvo.tmdbId) alvo.imdbId = await resolveTmdbToImdb(alvo, env, fetchJson);
+      if (!alvo.imdbId) return json({ error: 'sem id IMDb' }, 400);
+
+      // `?run=N` corre uma passagem a serio e devolve o resultado. Uma
+      // transcricao que corre em segundo plano e falha e' invisivel; com isto
+      // o erro vem no corpo da resposta em vez de se perder nos registos.
+      let corrida = null;
+      const pedidos = Number(url.searchParams.get('run') || 0);
+      if (pedidos > 0) {
+        const streams = await buildStreams(alvo, env);
+        const ytId = (streams.streams || []).map((item) => item.ytId).filter(Boolean)[0];
+        if (!ytId) {
+          corrida = { error: 'sem video oficial para este episodio', streams: (streams.streams || []).length };
+        } else {
+          try {
+            corrida = await runPass(alvo, ytId, { ...env, ASR_BLOCKS_PER_PASS: String(pedidos) });
+          } catch (error) {
+            // O erro tem de chegar a quem pediu: uma excepcao aqui derrubava o
+            // Worker inteiro com `1101` e nao dizia nada sobre a causa.
+            corrida = { error: String((error && error.message) || error), pilha: String((error && error.stack) || '').slice(0, 400) };
+          }
+          corrida.videoId = ytId;
+        }
+      }
+
+      const pronta = await readTranscript(alvo, env);
+      const estado = await readState(alvo, env);
+      return json(
+        {
+          ligado: asrEnabled(env),
+          chave: asrKey(alvo),
+          pronta: Boolean(pronta),
+          deixas: pronta ? (pronta.match(/-->/g) || []).length : 0,
+          progresso: estado
+            ? { feitos: Object.keys(estado.feitos || {}).length, total: estado.totalBlocos, falhas: estado.falhas, modelo: estado.modelo }
+            : null,
+          ...(corrida ? { corrida } : {}),
+        },
+        200,
+        { 'Cache-Control': 'no-store' },
+      );
+    }
 
     // Experiencia 0 do plano: a extracao do audio funciona a partir de um IP de
     // datacentro? Sonda temporaria — sai quando a resposta estiver arrumada.
