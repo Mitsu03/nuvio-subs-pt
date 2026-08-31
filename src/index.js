@@ -40,8 +40,9 @@ import { renderLandingPage } from './landing.js';
 import { runProbes } from './probe.js';
 import { probePlayer } from './youtube/probe.js';
 import { isEnabled as asrEnabled, readTranscript, readState, asrKey, runPass } from './asr/index.js';
-import { ensureCaptions, captionsKey } from './captions.js';
+import { ensureCaptions, captionsKey, storeCaptions } from './captions.js';
 import { watchConfig, playerResponse } from './youtube/player.js';
+import { fetchCaptionsFromTrack, cuesFromJson3 } from './providers/youtube.js';
 import { buildCatalog, parseSkip } from './catalogs.js';
 import { isAnime } from './anime.js';
 import { buildStreams } from './streams/index.js';
@@ -351,6 +352,69 @@ async function handleStream(env, type, rawId, fromPlugin = false) {
 }
 
 /**
+ * Recebe do plugin as legendas turcas do video oficial.
+ *
+ * Existe porque o Worker sozinho ja nao as consegue ir buscar: a pagina do
+ * video responde `429` aos IPs da Cloudflare, e sem ela nao ha lista de
+ * faixas. O plugin corre no aparelho do utilizador, com um IP domestico a que
+ * o YouTube responde, e por isso e' ele que traz o que falta.
+ *
+ * Dois caminhos, pela ordem do que custa menos ao aparelho:
+ *
+ *   `baseUrl` — o plugin manda so o endereco da faixa (algumas centenas de
+ *   bytes) e o Worker vai buscar o texto. Serve enquanto esse endereco nao
+ *   estiver preso ao IP de quem o pediu.
+ *
+ *   `json3`   — o plugin manda o texto ja descarregado. Custa-lhe uns
+ *   megabytes, mas nao depende de o Worker conseguir falar com o YouTube.
+ *
+ * Guardar e' idempotente: se ja la esta legenda para o episodio, nao se faz
+ * nada. Isto e' chamado a cada abertura da lista de fontes.
+ */
+async function handlePluginCaptions(request, env, ctx, sincrono = false) {
+  const length = Number(request.headers.get('content-length') || 0);
+  if (length > 8 * 1024 * 1024) return json({ error: 'corpo grande demais' }, 413);
+  if (!env.SUBS) return json({ error: 'sem KV' }, 503);
+
+  let corpo;
+  try {
+    corpo = await request.json();
+  } catch (error) {
+    return json({ error: 'corpo ilegivel' }, 400);
+  }
+
+  const video = parseVideoId(corpo && corpo.id, (corpo && corpo.type) || 'series');
+  if (!video) return json({ error: 'id nao reconhecido' }, 400);
+  if (!video.imdbId && video.tmdbId) video.imdbId = await resolveTmdbToImdb(video, env, fetchJson);
+  if (!video.imdbId) return json({ error: 'sem id IMDb' }, 400);
+
+  const chave = captionsKey(video);
+  const guardado = await env.SUBS.get(chave).catch(() => null);
+  if (guardado) return json({ ok: true, ja: true, chave });
+
+  const opcoes = { kind: corpo.kind || '', lang: corpo.lang || 'tr' };
+  const trabalho = async () => {
+    const encontrado = corpo.json3
+      ? cuesFromJson3(String(corpo.json3), opcoes)
+      : corpo.baseUrl
+        ? await fetchCaptionsFromTrack(String(corpo.baseUrl), opcoes)
+        : { motivo: 'sem-faixa' };
+
+    if (!encontrado || encontrado.motivo) return { ok: false, motivo: encontrado?.motivo || 'sem-faixa', detalhe: encontrado };
+
+    const gravado = await storeCaptions(video, encontrado.cues, env);
+    return { ok: true, chave, deixas: gravado?.deixas || 0, kind: encontrado.kind };
+  };
+
+  // Por defeito o plugin nao espera: descarregar e arrumar uma faixa demora
+  // segundos, e isso era tempo a mais a somar a` lista de fontes. Com `?sync=1`
+  // espera-se, que e' como se ve o resultado a diagnosticar.
+  if (sincrono) return json(await trabalho());
+  ctx.waitUntil(trabalho().catch(() => {}));
+  return json({ ok: true, aceite: true, chave });
+}
+
+/**
  * Recebe do plugin os formatos que ele extraiu e devolve o endereco do
  * manifesto. O corpo vem de fora, por isso ha um tecto de tamanho antes de
  * sequer se tentar interpretar.
@@ -580,6 +644,12 @@ export default {
     if (pluginVideo) return handleStream(env, pluginVideo[1], pluginVideo[2], true);
 
     if (path === '/dash' && request.method === 'POST') return handleDashCreate(request, env);
+
+    // O plugin entrega as legendas que so ele consegue ir buscar. Ver
+    // `handlePluginCaptions`.
+    if (path === '/plugin/captions' && request.method === 'POST') {
+      return handlePluginCaptions(request, env, ctx, url.searchParams.get('sync') === '1');
+    }
 
     const dashFile = path.match(/^\/dash\/([0-9a-f]{32})\.mpd$/);
     if (dashFile) {

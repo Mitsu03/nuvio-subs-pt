@@ -12,6 +12,7 @@ import {
 import { decodeSubtitleBytes } from '../src/format/decode.js';
 import { unpackSubtitle, isGzip, isZip } from '../src/format/archive.js';
 import { parseVideoId, imdbNumber, episodeHint, videoCacheKey } from '../src/ids.js';
+import { cuesFromJson3, pickTrack } from '../src/providers/youtube.js';
 import { signToken, verifyToken, isAllowedSource, payloadUrls } from '../src/token.js';
 import { buildBatches, resolveEngineName, translateLines } from '../src/translate/index.js';
 import { rankCandidates, scoreCandidate } from '../src/providers/index.js';
@@ -161,6 +162,10 @@ test('ids: le as formas imdb e tmdb', () => {
   assert.equal(parseVideoId('tt11093718', 'movie').season, null);
   assert.equal(parseVideoId('tmdb:90681:2:3', 'tv').tmdbId, '90681');
   assert.equal(parseVideoId('kitsu:123', 'series'), null);
+  // O prefixo `tmdb:` colado a um id do IMDb ignora-se em vez de matar o pedido.
+  assert.equal(parseVideoId('tmdb:tt24060116:1:1', 'series').imdbId, 'tt24060116');
+  assert.equal(parseVideoId('tmdb:tt24060116:1:1', 'series').episode, 1);
+  assert.equal(parseVideoId('tmdb:tt24060116', 'movie').imdbId, 'tt24060116');
   assert.equal(parseVideoId('', 'series'), null);
 });
 
@@ -480,6 +485,52 @@ test('providers: o nome do ficheiro que bate certo com o episodio manda', () => 
 
   assert.ok(scoreCandidate(exact, video) > scoreCandidate(generic, video));
   assert.equal(rankCandidates([generic, exact], video)[0], exact);
+});
+
+test('legendas do plugin: o json3 entregue vira deixas', () => {
+  const json3 = JSON.stringify({
+    events: [
+      { tStartMs: 1000, dDurationMs: 2000, segs: [{ utf8: 'Merhaba' }, { utf8: ' dunya' }] },
+      { tStartMs: 4000, dDurationMs: 1500, segs: [{ utf8: 'Iyi geceler' }] },
+      { tStartMs: 6000, segs: [{ utf8: '   ' }] },
+    ],
+  });
+
+  const saida = cuesFromJson3(json3, { kind: '', lang: 'tr' });
+  assert.equal(saida.motivo, undefined);
+  assert.equal(saida.kind, 'manual');
+  assert.equal(saida.cues.length, 2);
+  assert.deepEqual(saida.cues[0], { start: 1000, end: 3000, text: 'Merhaba dunya' });
+});
+
+test('legendas do plugin: json3 ilegivel ou vazio nao rebenta', () => {
+  assert.equal(cuesFromJson3('nao e json').motivo, 'recusado');
+  assert.equal(cuesFromJson3(JSON.stringify({ events: [] })).motivo, 'sem-faixa');
+});
+
+test('legendas do plugin: a faixa escrita por gente ganha a` automatica', () => {
+  const faixas = [
+    { languageCode: 'tr', kind: 'asr', baseUrl: 'a' },
+    { languageCode: 'tr', baseUrl: 'b' },
+    { languageCode: 'en', baseUrl: 'c' },
+  ];
+  assert.equal(pickTrack(faixas, 'tr').baseUrl, 'b');
+  assert.equal(pickTrack(faixas, 'pt'), null);
+});
+
+test('token: legendas guardadas em KV valem sem origem externa', async () => {
+  const { signToken, verifyToken } = await import('../src/token.js');
+  const segredo = 'segredo-de-teste';
+
+  const interno = { asr: 'yt:v1:tt24060116:1:1', urls: [], lang: 'pt', src: 'tr' };
+  assert.deepEqual(await verifyToken(await signToken(interno, segredo), segredo), interno);
+
+  // Sem origem nenhuma e sem chave de KV nao ha nada legitimo a servir.
+  assert.equal(await verifyToken(await signToken({ urls: [], lang: 'pt' }, segredo), segredo), null);
+
+  // A lista de hosts continua a mandar em quem traz enderecos.
+  const mau = { urls: ['https://exemplo.invalido/a.srt'], lang: 'pt' };
+  assert.equal(await verifyToken(await signToken(mau, segredo), segredo), null);
 });
 
 test('portugues europeu: o gerundio com auxiliar passa a `a` + infinitivo', async () => {

@@ -21,7 +21,21 @@ const HOST_SUFFIX = '.googlevideo.com';
 /** Ao fim disto os enderecos do googlevideo ja expiraram. */
 const TTL_SECONDS = 6 * 3600;
 
-const MAX_REPRESENTATIONS = 12;
+/**
+ * Uma faixa por conjunto, e nao doze.
+ *
+ * Cada Representation a mais e' uma qualidade entre as quais o leitor troca
+ * sozinho, e cada troca abre pedidos novos ao googlevideo — volume gasto contra
+ * o limite por IP que e' precisamente o que faz a reproducao morrer com `403`.
+ * Medido na Shield: reproduzir do inicio funciona, saltar da' `403` em
+ * `OkHttpDataSource.open`.
+ *
+ * O que se perde e' a adaptacao a` largura de banda: com uma faixa so, uma
+ * ligacao fraca passa a esperar em vez de baixar de qualidade. E' a troca que
+ * o utilizador pediu — «que de para andar para a frente ou tras, mesmo que
+ * precise de carregar».
+ */
+const MAX_REPRESENTATIONS = 2;
 const MAX_BODY_BYTES = 96 * 1024;
 
 /**

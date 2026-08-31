@@ -155,3 +155,46 @@ export async function fetchYoutubeCaptions(videoId, env, lang = 'tr') {
     return { motivo: 'recusado', erro: String((error && error.message) || error) };
   }
 }
+
+/**
+ * Le uma faixa de legendas a partir do endereco que o plugin arranjou.
+ *
+ * O `baseUrl` sai do `youtubei/v1/player` pedido no aparelho do utilizador —
+ * que e' o unico IP a quem o YouTube responde de forma fiavel. O Worker so
+ * precisa de ir buscar o texto e de o arrumar, que e' trabalho barato e sem
+ * defesa anti-bot pelo meio. Se este endereco tambem estiver preso ao IP de
+ * quem o pediu, o `motivo` di-lo e o plugin manda o texto na proxima.
+ */
+export async function fetchCaptionsFromTrack(baseUrl, { kind = '', lang = 'tr' } = {}) {
+  try {
+    // O `baseUrl` ja traz um `fmt`; tem de ser substituido e nao acrescentado.
+    const url = new URL(baseUrl);
+    url.searchParams.set('fmt', 'json3');
+
+    const resposta = await fetch(url.toString(), { headers: { 'User-Agent': BROWSER_UA } });
+    if (!resposta.ok) return { motivo: 'recusado', status: resposta.status };
+
+    const texto = await resposta.text();
+    if (!texto) return { motivo: 'recusado', erro: 'timedtext vazio' };
+
+    return cuesFromJson3(texto, { kind, lang });
+  } catch (error) {
+    return { motivo: 'recusado', erro: String((error && error.message) || error) };
+  }
+}
+
+/** O texto `json3` -> deixas prontas a guardar. Partilhado pelos dois caminhos. */
+export function cuesFromJson3(texto, { kind = '', lang = 'tr' } = {}) {
+  let cruas;
+  try {
+    cruas = json3ToCues(JSON.parse(texto));
+  } catch (error) {
+    return { motivo: 'recusado', erro: 'json3 ilegivel' };
+  }
+  if (!cruas.length) return { motivo: 'sem-faixa' };
+
+  // So o ASR precisa de ser arrumado; uma legenda escrita por gente ja vem
+  // com os tempos certos e mexer nela so a estragava.
+  const asr = kind === 'asr';
+  return { cues: asr ? tidyCues(cruas) : cruas, kind: asr ? 'asr' : 'manual', lang, cruas: cruas.length };
+}

@@ -30,9 +30,18 @@ var ANDROID = {
 var BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
-/** Quantas faixas de cada codec enviar. Chega para o leitor adaptar a largura. */
-var MAX_PER_CODEC = 6;
-var MAX_AUDIO = 2;
+/**
+ * Quantas faixas de cada codec enviar.
+ *
+ * Era 6 e 2, para o leitor poder adaptar a` largura de banda. Passou a uma e
+ * uma: cada qualidade a mais e' uma troca que o leitor faz sozinho, e cada
+ * troca sao pedidos novos ao googlevideo, que limita por IP. Medido na Shield,
+ * com doze faixas no manifesto: tocar do inicio funciona, saltar da' `403`.
+ *
+ * Com uma faixa so, uma ligacao fraca espera em vez de baixar de qualidade.
+ */
+var MAX_PER_CODEC = 1;
+var MAX_AUDIO = 1;
 
 function log(message) {
   try {
@@ -42,9 +51,20 @@ function log(message) {
   }
 }
 
-/** O id que o addon percebe: `tmdb:322499:1:1`, sem sufixo nos filmes. */
-function addonId(tmdbId, isSeries, season, episode) {
-  return isSeries ? 'tmdb:' + tmdbId + ':' + season + ':' + episode : 'tmdb:' + tmdbId;
+/**
+ * O id que o addon percebe: `tmdb:322499:1:1` ou `tt11093718:1:1`, sem sufixo
+ * nos filmes.
+ *
+ * O Nuvio tanto entrega o numero do TMDB como o id do IMDb — as fichas que vem
+ * do Cinemeta, do addon do TMDB e do proprio catalogo Turcas PT trazem `tt...`.
+ * O prefixo `tmdb:` so pertence ao numero: colado a um `tt`, o Worker tenta
+ * resolver o IMDb como se fosse TMDB, nao encontra nada e devolve zero streams
+ * — que na aplicacao aparece como a fonte a surgir e a desaparecer logo.
+ */
+function addonId(contentId, isSeries, season, episode) {
+  var id = String(contentId);
+  var base = /^tt\d+$/i.test(id) ? id : 'tmdb:' + id;
+  return isSeries ? base + ':' + season + ':' + episode : base;
 }
 
 /**
@@ -149,6 +169,51 @@ async function playerResponse(videoId, config) {
   return data;
 }
 
+/**
+ * Entrega ao Worker a faixa de legendas turca do video oficial.
+ *
+ * O Worker sozinho ja nao a consegue ir buscar — a pagina do video responde
+ * `429` aos IPs da Cloudflare — mas nos ja temos aqui a resposta do player,
+ * pedida do IP de casa, e e' nela que vem a lista de faixas. Mandar o endereco
+ * custa uns bytes e resolve o problema todo.
+ *
+ * Nao se espera pelo trabalho do outro lado: o Worker aceita e arruma depois,
+ * senao a lista de fontes ficava presa a descarregar legendas.
+ */
+async function sendCaptions(contentId, isSeries, season, episode, data) {
+  try {
+    var lista =
+      (((data.captions || {}).playerCaptionsTracklistRenderer || {}).captionTracks) || [];
+    var turcas = [];
+    for (var i = 0; i < lista.length; i += 1) {
+      if (lista[i].languageCode === 'tr' && lista[i].baseUrl) turcas.push(lista[i]);
+    }
+    if (turcas.length === 0) return;
+
+    // A escrita por gente vale mais do que a gerada pela maquina.
+    var faixa = turcas[0];
+    for (var j = 0; j < turcas.length; j += 1) {
+      if (turcas[j].kind !== 'asr') { faixa = turcas[j]; break; }
+    }
+
+    await fetch(WORKER_ORIGIN + '/plugin/captions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: addonId(contentId, isSeries, season, episode),
+        type: isSeries ? 'series' : 'movie',
+        baseUrl: faixa.baseUrl,
+        kind: faixa.kind || '',
+        lang: 'tr',
+      }),
+    });
+    log('faixa de legendas entregue (' + (faixa.kind || 'manual') + ')');
+  } catch (error) {
+    // Legendas sao um extra: falhar aqui nao pode tirar os streams a ninguem.
+    log('nao consegui entregar as legendas: ' + (error && error.message ? error.message : error));
+  }
+}
+
 function codecsOf(format) {
   var match = String(format.mimeType || '').match(/codecs="([^"]+)"/);
   return match ? match[1] : '';
@@ -217,15 +282,18 @@ function splitFormats(data) {
     return (b.bitrate || 0) - (a.bitrate || 0);
   });
 
-  // Ficheiro unico, video e audio juntos. Nunca passa dos 360p, mas nao depende
-  // do manifesto nem do Worker: e' a rede de seguranca.
+  // Ficheiro unico, video e audio juntos. Nao depende do manifesto nem do
+  // Worker, e no computador e' a unica coisa que toca: o mpv que o Nuvio usa
+  // no ambiente de trabalho nao traz o leitor de DASH, e os enderecos das
+  // faixas separadas so respondem a pedidos com um intervalo de bytes fechado.
+  // Por isso vale a pena escolher o melhor e nao o primeiro: quando o YouTube
+  // ainda publica o itag 22 sao 720p em vez de 360p.
   var progressive = null;
   var plain = streaming.formats || [];
   for (var j = 0; j < plain.length; j += 1) {
-    if (plain[j].url && String(plain[j].mimeType || '').indexOf('video/mp4') === 0) {
-      progressive = plain[j];
-      break;
-    }
+    var candidate = plain[j];
+    if (!candidate.url || String(candidate.mimeType || '').indexOf('video/mp4') !== 0) continue;
+    if (!progressive || (candidate.height || 0) > (progressive.height || 0)) progressive = candidate;
   }
 
   return {
@@ -269,7 +337,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
   try {
     var videos = await findVideos(tmdbId, isSeries, season, episode);
     if (videos.length === 0) {
-      log('sem video oficial para tmdb:' + tmdbId);
+      log('sem video oficial para ' + tmdbId);
       return [];
     }
 
@@ -284,6 +352,8 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
     var duration = Number((data.videoDetails && data.videoDetails.lengthSeconds) || 0);
     var formats = splitFormats(data);
+
+    await sendCaptions(tmdbId, isSeries, season, episode, data);
 
     if (formats.video.length > 0 && formats.audio.length > 0) {
       var url = await manifestUrl(formats, duration);

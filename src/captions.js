@@ -77,3 +77,24 @@ export async function ensureCaptions(video, env, resolveVideoId) {
 
   return { chave, kind: encontrado.kind, deixas: encontrado.cues.length };
 }
+
+/**
+ * Guarda legendas que vieram de fora — do plugin, que corre no aparelho do
+ * utilizador e por isso fala com o YouTube pelo IP de casa.
+ *
+ * O Worker sozinho ja nao consegue: os IPs da Cloudflare apanham `429` na
+ * pagina do video. Sem este caminho, um episodio com legendas turcas no canal
+ * oficial ficava sem legenda nenhuma so por causa de onde o addon esta alojado.
+ */
+export async function storeCaptions(video, cues, env) {
+  if (!env.SUBS || !Array.isArray(cues) || cues.length === 0) return null;
+
+  const chave = captionsKey(video);
+  const dias = Number(env.CAPTIONS_CACHE_DAYS || 180);
+  await env.SUBS.put(chave, serializeSrt(cues), { expirationTtl: dias * 86400 }).catch(() => {});
+  // A marca de «ja procurei e nao havia» tem de sair, senao o pedido seguinte
+  // desiste antes de olhar para o que acabamos de guardar.
+  await env.SUBS.delete(missKey(video)).catch(() => {});
+
+  return { chave, deixas: cues.length };
+}

@@ -89,7 +89,12 @@ export async function verifyToken(token, secret) {
     // Um token pode trazer varias origens de reserva; todas tem de passar a
     // lista de hosts, senao bastava assinar uma boa para arrastar outra.
     const urls = payloadUrls(payload);
-    if (urls.length === 0 || !urls.every(isAllowedSource)) return null;
+    if (!urls.every(isAllowedSource)) return null;
+    // Sem origens externas o token so vale se apontar para dentro: a chave de
+    // KV das legendas do proprio video. A lista de hosts existe para nao servir
+    // de proxy aberto, e uma chave nossa nao e' endereco de lado nenhum — mas
+    // exigir sempre pelo menos um URL deitava fora justamente essas legendas.
+    if (urls.length === 0 && !payload.asr) return null;
     return payload;
   } catch {
     return null;
