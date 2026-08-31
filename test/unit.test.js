@@ -12,6 +12,7 @@ import {
 import { decodeSubtitleBytes } from '../src/format/decode.js';
 import { unpackSubtitle, isGzip, isZip } from '../src/format/archive.js';
 import { parseVideoId, imdbNumber, episodeHint, videoCacheKey } from '../src/ids.js';
+import { cuesFromJson3, pickTrack } from '../src/providers/youtube.js';
 import { signToken, verifyToken, isAllowedSource, payloadUrls } from '../src/token.js';
 import { buildBatches, resolveEngineName, translateLines } from '../src/translate/index.js';
 import { rankCandidates, scoreCandidate } from '../src/providers/index.js';
@@ -161,6 +162,10 @@ test('ids: le as formas imdb e tmdb', () => {
   assert.equal(parseVideoId('tt11093718', 'movie').season, null);
   assert.equal(parseVideoId('tmdb:90681:2:3', 'tv').tmdbId, '90681');
   assert.equal(parseVideoId('kitsu:123', 'series'), null);
+  // O prefixo `tmdb:` colado a um id do IMDb ignora-se em vez de matar o pedido.
+  assert.equal(parseVideoId('tmdb:tt24060116:1:1', 'series').imdbId, 'tt24060116');
+  assert.equal(parseVideoId('tmdb:tt24060116:1:1', 'series').episode, 1);
+  assert.equal(parseVideoId('tmdb:tt24060116', 'movie').imdbId, 'tt24060116');
   assert.equal(parseVideoId('', 'series'), null);
 });
 
@@ -480,4 +485,131 @@ test('providers: o nome do ficheiro que bate certo com o episodio manda', () => 
 
   assert.ok(scoreCandidate(exact, video) > scoreCandidate(generic, video));
   assert.equal(rankCandidates([generic, exact], video)[0], exact);
+});
+
+test('legendas do plugin: o json3 entregue vira deixas', () => {
+  const json3 = JSON.stringify({
+    events: [
+      { tStartMs: 1000, dDurationMs: 2000, segs: [{ utf8: 'Merhaba' }, { utf8: ' dunya' }] },
+      { tStartMs: 4000, dDurationMs: 1500, segs: [{ utf8: 'Iyi geceler' }] },
+      { tStartMs: 6000, segs: [{ utf8: '   ' }] },
+    ],
+  });
+
+  const saida = cuesFromJson3(json3, { kind: '', lang: 'tr' });
+  assert.equal(saida.motivo, undefined);
+  assert.equal(saida.kind, 'manual');
+  assert.equal(saida.cues.length, 2);
+  assert.deepEqual(saida.cues[0], { start: 1000, end: 3000, text: 'Merhaba dunya' });
+});
+
+test('legendas do plugin: json3 ilegivel ou vazio nao rebenta', () => {
+  assert.equal(cuesFromJson3('nao e json').motivo, 'recusado');
+  assert.equal(cuesFromJson3(JSON.stringify({ events: [] })).motivo, 'sem-faixa');
+});
+
+test('legendas do plugin: a faixa escrita por gente ganha a` automatica', () => {
+  const faixas = [
+    { languageCode: 'tr', kind: 'asr', baseUrl: 'a' },
+    { languageCode: 'tr', baseUrl: 'b' },
+    { languageCode: 'en', baseUrl: 'c' },
+  ];
+  assert.equal(pickTrack(faixas, 'tr').baseUrl, 'b');
+  assert.equal(pickTrack(faixas, 'pt'), null);
+});
+
+test('token: legendas guardadas em KV valem sem origem externa', async () => {
+  const { signToken, verifyToken } = await import('../src/token.js');
+  const segredo = 'segredo-de-teste';
+
+  const interno = { asr: 'yt:v1:tt24060116:1:1', urls: [], lang: 'pt', src: 'tr' };
+  assert.deepEqual(await verifyToken(await signToken(interno, segredo), segredo), interno);
+
+  // Sem origem nenhuma e sem chave de KV nao ha nada legitimo a servir.
+  assert.equal(await verifyToken(await signToken({ urls: [], lang: 'pt' }, segredo), segredo), null);
+
+  // A lista de hosts continua a mandar em quem traz enderecos.
+  const mau = { urls: ['https://exemplo.invalido/a.srt'], lang: 'pt' };
+  assert.equal(await verifyToken(await signToken(mau, segredo), segredo), null);
+});
+
+test('portugues europeu: o gerundio com auxiliar passa a `a` + infinitivo', async () => {
+  const { toEuropeanPortuguese: pt } = await import('../src/translate/pt-pt.js');
+
+  assert.equal(pt('Ele esta fazendo o jantar.'), 'Ele esta a fazer o jantar.');
+  assert.equal(pt('Ela continua trabalhando.'), 'Ela continua a trabalhar.');
+  assert.equal(pt('Estava sendo dificil.'), 'Estava a ser dificil.');
+  assert.equal(pt('Estou indo para casa.'), 'Estou a ir para casa.');
+  assert.equal(pt('Ele estava vindo.'), 'Ele estava a vir.');
+
+  // Sem auxiliar o gerundio e' legitimo, e nao se toca.
+  assert.equal(pt('Correndo, chegou a tempo.'), 'Correndo, chegou a tempo.');
+  // `-ondo` fica de fora: dava «por» em vez de «pôr».
+  assert.equal(pt('Esta pondo a mesa.'), 'Esta pondo a mesa.');
+});
+
+test('portugues europeu: o pronome sai de entre o auxiliar e o infinitivo', async () => {
+  const { toEuropeanPortuguese: pt } = await import('../src/translate/pt-pt.js');
+
+  assert.equal(pt('Nao vou me intrometer.'), 'Nao me vou intrometer.');
+  assert.equal(pt('Nao posso te dizer isso.'), 'Nao te posso dizer isso.');
+  assert.equal(pt('Ja vou me embora.'), 'Ja me vou embora.');
+  assert.equal(pt('Nunca quis te magoar.'), 'Nunca te quis magoar.');
+
+  // Sem atractor a ordem ja e' a portuguesa, e mexer so estragava.
+  assert.equal(pt('Vou dizer-te uma coisa.'), 'Vou dizer-te uma coisa.');
+});
+
+test('portugues europeu: nenhuma frase comeca por pronome', async () => {
+  const { toEuropeanPortuguese: pt } = await import('../src/translate/pt-pt.js');
+
+  assert.equal(pt('Me desculpe.'), 'Desculpe-me.');
+  assert.equal(pt('Te amo muito.'), 'Amo-te muito.');
+  assert.equal(pt('Ele riu. Me disse tudo.'), 'Ele riu. Disse-me tudo.');
+
+  // `Nos` fica de fora: tambem e' a contraccao de «em os».
+  assert.equal(pt('Nos anos 90 era diferente.'), 'Nos anos 90 era diferente.');
+});
+
+test('portugues europeu: so se trocam palavras que nao mudam de genero', async () => {
+  const { toEuropeanPortuguese: pt } = await import('../src/translate/pt-pt.js');
+
+  assert.equal(pt('Tomou o cafe da manha no onibus.'), 'Tomou o cafe da manha no onibus.');
+  assert.equal(pt('Tomou o café da manhã no ônibus.'), 'Tomou o pequeno-almoço no autocarro.');
+  assert.equal(pt('O gênero econômico do bebê.'), 'O género económico do bebé.');
+  assert.equal(pt('Isto é para você.'), 'Isto é para ti.');
+
+  // Estas mudavam de genero e partiam a concordancia: «A frigorifico», «o equipa».
+  assert.equal(pt('A geladeira avariou.'), 'A geladeira avariou.');
+  assert.equal(pt('O time perdeu.'), 'O time perdeu.');
+  assert.equal(pt('Saiu do banheiro.'), 'Saiu do banheiro.');
+});
+
+test('portugues europeu: nao se aplica quando o utilizador pediu PT-BR', async () => {
+  const linhas = ['Nao vou me intrometer.'];
+  const env = {
+    TRANSLATE_PROVIDER: 'workersai',
+    AI: { run: async () => ({ response: '1. Nao vou me intrometer.' }) },
+  };
+
+  const brasil = await translateLines(linhas, { from: 'en', to: 'pt-BR' }, env);
+  assert.equal(brasil.lines[0], 'Nao vou me intrometer.');
+
+  const portugal = await translateLines(linhas, { from: 'en', to: 'pt' }, env);
+  assert.equal(portugal.lines[0], 'Nao me vou intrometer.');
+});
+
+test('cache: mudar as regras de portugues da uma chave diferente', async () => {
+  const { PT_STYLE_VERSION } = await import('../src/translate/pt-pt.js');
+  assert.ok(PT_STYLE_VERSION, 'a versao das regras tem de existir');
+
+  const payload = { urls: ['https://exemplo/a.srt'], lang: 'pt', src: 'en', tr: 1 };
+  const env = { TRANSLATE_PROVIDER: 'workersai', WORKERSAI_MODEL: 'm' };
+
+  // Uma legenda sem traducao nao depende das regras, e a chave nao pode mexer-se.
+  const crua = await cacheKey({ ...payload, tr: 0 }, env);
+  assert.equal(crua, await cacheKey({ ...payload, tr: 0 }, env));
+
+  // Com traducao, a versao entra na chave.
+  assert.notEqual(await cacheKey(payload, env), crua);
 });

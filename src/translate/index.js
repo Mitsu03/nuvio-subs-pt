@@ -8,6 +8,7 @@
  */
 
 import { mapLimit } from '../http.js';
+import { linesToEuropeanPortuguese } from './pt-pt.js';
 import * as workersai from './workersai.js';
 import * as deepl from './deepl.js';
 import * as google from './google.js';
@@ -70,6 +71,13 @@ export async function translateLines(lines, options, env) {
   const engine = ENGINES[engineName];
   const engineOptions = { ...options, mode: engineName === 'workersai-m2m' ? 'm2m' : 'instruct' };
 
+  // Segunda passagem para portugues europeu. O prompt pede-o, mas os modelos
+  // derrapam para brasileiro; esta passagem e' deterministica e apanha o que
+  // escapar. Nao se aplica quando o utilizador pediu PT-BR — ai o brasileiro
+  // e' que e' a resposta certa.
+  const paraPortugal = options.to !== 'pt-BR';
+  const arruma = (linhas) => (paraPortugal ? linesToEuropeanPortuguese(linhas) : linhas);
+
   const maxCalls = Number(env.MAX_TRANSLATE_CALLS) || 40;
   // 12 e o valor medido: a 6, um episodio de 1100 deixas levava 41s e o
   // prewarm nao chegava a tempo da janela do waitUntil; a 12 leva cerca de 30s.
@@ -109,7 +117,9 @@ export async function translateLines(lines, options, env) {
       if (!Array.isArray(result) || result.length !== situado.batch.length) {
         throw new Error('contagem de linhas desalinhada');
       }
-      return result.map((line, index) => (line && line.trim() !== '' ? line : situado.batch[index]));
+      return arruma(
+        result.map((line, index) => (line && line.trim() !== '' ? line : situado.batch[index])),
+      );
     } catch (error) {
       if (!firstError) firstError = error.message;
       return null;

@@ -172,6 +172,29 @@ caber na janela que a Cloudflare dá ao `waitUntil`: com `TRANSLATE_CONCURRENCY`
 a 6 o episódio levava 41 s e o prewarm não chegava a tempo; a 12 leva ~30 s e
 chega. Se baixares a concorrência, o prewarm deixa de cumprir.
 
+**O português é de Portugal, e isso não sai de graça.** Pedir «português
+europeu» ao modelo não chega: medido num episódio inteiro de 1532 deixas, saía
+*«não vou me intrometer»*, *«está fazendo»*, *«você»*. Os modelos generalistas
+foram treinados sobretudo com português do Brasil e derrapam para lá. Por isso
+são duas coisas: o *prompt* traz agora regras concretas com exemplos (gerúndio,
+tratamento por tu, posição do pronome, vocabulário, grafia), e a seguir passa
+uma segunda mão determinística, em `src/translate/pt-pt.js`.
+
+Essa segunda mão só mexe no que é seguro mexer sem perceber a frase — gerúndio
+com auxiliar (`está fazendo` → `está a fazer`), pronome entalado entre auxiliar
+e infinitivo depois de um atrator (`não vou me intrometer` → `não me vou
+intrometer`), pronome no início da frase (`Me desculpe` → `Desculpe-me`) e
+palavras que se trocam uma a uma. No mesmo episódio toca em 4,3% das linhas.
+
+Fica deliberadamente de fora tudo o que obrigue a conjugar (`você fala` → `tu
+falas`) e tudo o que mude de género: `a geladeira` → `A frigorífico` e `o time`
+→ `o equipa` foram medidos, e o adjetivo a seguir continuaria a discordar de
+qualquer forma. Uma deixa em brasileiro correto é melhor do que uma deixa em
+português estragado. Essas ficam para o *prompt*.
+
+A versão das regras entra na chave da cache (`PT_STYLE_VERSION`): sem isso, uma
+legenda já traduzida continuava a ser servida em brasileiro até a cache expirar.
+
 Se uma parte da tradução falhar — quota, tempo, modelo a portar-se mal — essas
 deixas ficam no texto de origem em vez de desaparecerem. A legenda continua
 sincronizada e utilizável; nunca se devolve um ficheiro desalinhado.

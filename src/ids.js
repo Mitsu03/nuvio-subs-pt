@@ -27,6 +27,11 @@ export function parseVideoId(rawId, type) {
   const canonicalType = type === 'tv' ? 'series' : String(type || '').toLowerCase();
   const parts = raw.split(':');
 
+  // `tmdb:tt1234567` e' engano de quem chama — versoes antigas do plugin
+  // punham o prefixo em qualquer id. O `tt...` ja e' o id final e nao ha nada
+  // a resolver, por isso deita-se fora o prefixo em vez de devolver nada.
+  if (/^tmdb$/i.test(parts[0]) && /^tt\d{6,10}$/i.test(parts[1] || '')) parts.shift();
+
   // tt1234567 | tt1234567:1:5
   if (/^tt\d{6,10}$/i.test(parts[0])) {
     const season = parts.length >= 3 ? Number(parts[1]) : null;

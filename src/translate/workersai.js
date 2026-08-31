@@ -30,12 +30,35 @@ function buildPrompt(lines, options) {
 
   const numbered = lines.map((line, index) => `${index + 1}. ${line}`).join('\n');
 
+  // O portugues europeu tem de vir com regras concretas e exemplos. Pedir
+  // «portugues europeu (de Portugal)» era o que estava aqui, e nao chegava:
+  // medido num episodio inteiro, o modelo escrevia «nao vou me intrometer»,
+  // «esta fazendo» e «voce». Um modelo generalista foi treinado sobretudo com
+  // portugues do Brasil, e so a regra explicita o tira de la'.
+  const regrasPt =
+    options.to === 'pt-BR'
+      ? ['Escreve em portugues do Brasil.']
+      : [
+          'ESCREVE EM PORTUGUES DE PORTUGAL, nunca do Brasil. Cumpre isto a risca:',
+          '(1) Nada de gerundio com auxiliar: escreve "esta a fazer", nunca "esta fazendo";',
+          '"continuo a pensar", nunca "continuo pensando".',
+          '(2) Trata por "tu" e conjuga na segunda pessoa: "tu queres", "onde estas".',
+          'Nao uses "voce" nem "a gente" (usa "nos").',
+          '(3) O pronome vem antes do verbo depois de "nao", "que", "quem", "ja", "nunca":',
+          '"nao me vou embora", nunca "nao vou me embora". No inicio da frase o pronome',
+          'vem depois do verbo, com hifen: "Desculpa-me", nunca "Me desculpa".',
+          '(4) Vocabulario de Portugal: ecra, telemovel, autocarro, casa de banho,',
+          'pequeno-almoco, comboio, equipa, sumo, gelado, rapariga, apelido.',
+          '(5) Grafia de Portugal: "genero", "economico", "facto", "registo", "bebe".',
+        ];
+
   return [
     {
       role: 'system',
       content: [
         `Es um tradutor de legendas de ${from} para ${to}.`,
-        'O material e uma serie historica turca: mantem os nomes proprios, os titulos',
+        ...regrasPt,
+        'O material e uma serie ou filme turco: mantem os nomes proprios, os titulos',
         '(Bey, Sultao, Xeque, Hatun, Alp) e as expressoes religiosas tal como estao.',
         'Traduz cada linha numerada de forma independente e devolve exactamente o mesmo',
         'numero de linhas, com a mesma numeracao e pela mesma ordem.',
