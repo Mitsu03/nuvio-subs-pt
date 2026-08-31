@@ -269,24 +269,31 @@ segundo megabyte.
 
 ---
 
-## 3. `403` a reproduzir e a saltar no vídeo — CAUSA MEDIDA, e está fora deste addon
+## 3. `403` a reproduzir e a saltar no vídeo — RESOLVIDO em 31-08-2026 (com custo de qualidade)
 
-Aberto em 31-08-2026 e medido no mesmo dia, do PC, da TV LG e do Firefox. A
-causa está identificada e **não é nenhuma das que o plano tinha previsto, nem a
-que este documento chegou a afirmar a meio**: não é o `Range`, não é o codec,
-não é o volume de pedidos, e não é falta de *proof-of-origin token*.
+Aberto em 31-08-2026 e medido no mesmo dia, do PC, da TV LG e do Firefox.
 
-É o protocolo. Os endereços por `itag` que o addon usa servem só os primeiros
-~50 s. O browser passa à frente disso por falar **SABR** — outro protocolo, que
-vem na mesma resposta do player que o plugin já recebe, e que nenhum manifesto
-DASH consegue exprimir.
+**A resposta curta:** o tecto dos ~5,8 MB é dos endereços **adaptativos**. O
+formato **progressivo** — o ficheiro único que vem em `streamingData.formats` —
+serve qualquer intervalo, em qualquer posição, sem token nenhum. O plugin já o
+extraía e punha-o atrás como reserva; passou à frente. Custa a qualidade (360p
+em vez de 1080p), e é essa a troca.
 
-O paliativo das faixas já entrou e continua a valer, mas não resolve isto.
+**A resposta longa** é o que se eliminou pelo caminho, e vale a pena ler porque
+o documento se enganou duas vezes por escrito: não é o `Range`, não é o codec,
+não é o volume de pedidos. É o protocolo — os endereços adaptativos só servem
+~50 s e o browser passa à frente por falar **SABR** — e o SABR **exige** um
+*proof-of-origin token*, ao contrário do que se afirmou a meio deste documento.
+Nenhuma dessas duas vias serve para o ExoPlayer, que pede intervalos de bytes.
+
+O paliativo das faixas (`MAX_PER_CODEC = 1`) já entrou e continua a valer por
+poupar pedidos, mas nunca foi ele que destrancou nada.
 
 Ordem de leitura: o sintoma, o que se eliminou, e depois as medições. As
 conclusões intermédias ficaram no documento de propósito — duas delas estavam
 erradas, e o que as derrubou foi sempre a mesma coisa: testar a premissa do
-ramo antes de o executar.
+ramo antes de o executar. A última errou por não ter sondado o formato que
+estava à vista desde o princípio.
 
 ### O sintoma, medido na Shield
 
@@ -472,7 +479,7 @@ TVHTML5       —   UNPLAYABLE, 0 formatos (nem cifrados)
 Só o `ANDROID` e o `IOS` devolvem endereços directos, e ambos dão a mesma faixa
 com o mesmo limite. Os restantes nem chegam a entregar formatos.
 
-### A causa, medida no browser: e' o protocolo, nao a credencial
+### A causa, medida no browser: e' o protocolo — e, ao contrario do que se escreveu aqui, tambem a credencial
 
 A hipotese anterior — falta de *proof-of-origin token* — **esta' errada**, e foi
 o browser que a desmentiu. Reproduzido o mesmo video no Firefox, do mesmo IP:
@@ -502,51 +509,92 @@ duas coisas ao mesmo tempo:
 |---|---|
 | `adaptiveFormats` | 26 enderecos por `itag`, sem `n` e sem `pot` — **limitados ao prefixo** |
 | `serverAbrStreamingUrl` | `/videoplayback` com `sabr=1` — o caminho que o browser usa |
-| `videoPlaybackUstreamerConfig` | 1780 caracteres de configuracao que o SABR exige |
+| `videoPlaybackUstreamerConfig` | ~1800 caracteres de configuracao que o SABR exige |
 
-Ou seja: o que falta nao esta' por arranjar em lado nenhum — ja vem na resposta
-que o plugin recebe hoje. O que falta e' saber falar o protocolo.
+### CORRECÇÃO (31-08-2026, tarde): o `pot` é exigido, e está no corpo do POST
 
-### O que isso custa, e porque nao cabe onde o codigo esta' agora
+A frase escrita acima em 31-08-2026 de manhã — *«nao falta credencial nenhuma»* —
+**está errada**, e o que a desmentiu foi falar SABR a sério em vez de o observar
+de fora.
 
-O SABR nao e' um endereco que se entregue a um leitor. E' um POST com um corpo
-em protobuf (posicao, formatos escolhidos, o que ja esta' em buffer) e uma
-resposta em UMP que tem de ser desmontada em segmentos antes de chegar ao
-descodificador.
+A observação de origem continua correcta: o browser não tem `pot` no endereço.
+A inferência que se tirou dela não. No SABR o token **não viaja na query string,
+viaja dentro do corpo protobuf do POST**, que é precisamente o sítio onde não se
+olhou. Falado o protocolo com a biblioteca `googlevideo` (LuanRT), o servidor
+responde `200` com UMP a sério e diz o que falta, em claro:
 
-Isso quer dizer que **nao ha manifesto DASH que exprima isto**. O ExoPlayer e o
-leitor da TV pedem intervalos de bytes; o SABR nao os serve. Entre um e outro
-teria de existir algo que fale SABR para cima e sirva bytes para baixo — e esse
-algo tem de correr no IP de casa, portanto nao pode ser o Worker.
+```
+sps -> 2     PO token exigido; ainda passam ~1-2 MB com um cold start token
+sps -> 3     "Cannot proceed with stream: attestation required"   <- morre aqui
+```
 
-O plugin tambem nao serve como esta': corre em QuickJS, devolve um URL ao
-leitor, e nao pode levantar um servidor local para o alimentar.
+Isso mata a instrução «não ir atrás de um `pot`» que ficou escrita: era ir atrás
+da coisa certa. O que se mediu a seguir:
 
-**A conclusao honesta e' que isto nao se resolve dentro deste addon.** Resolve-se
-na aplicacao — quem tem o leitor tem de saber pedir SABR — ou nao se resolve.
+| tentativa | resultado |
+|---|---|
+| `createColdStartToken(visitorData)` no endereço directo (`&pot=`) | `403` na mesma |
+| BotGuard corrido em Node com `jsdom`, `GenerateIT` devolve `200` e token real | SABR sobe a `sps: 3` |
+| BotGuard corrido **no Firefox verdadeiro** desta máquina, token genuíno | SABR sobe a `sps: 3` na mesma |
+| `&pot=` colado aos `adaptiveFormats` do cliente `ANDROID` | `403` aos 20/200/500 MB |
+| cliente `WEB` (página, sessão legítima) | **0 de 30 formatos têm endereço** — só SABR |
 
-### O que fazer com isto
+Ou seja: cunhar o token não é o bloqueio (cunha-se, e é válido). O que falta é
+reproduzir com fidelidade a sessão SABR do browser, e mesmo resolvido isso
+continuava a faltar o essencial — o ExoPlayer pede intervalos de bytes e o SABR
+não os serve, portanto entre um e outro teria de correr, no IP de casa, algo que
+fale SABR para cima e sirva bytes para baixo. Nem o Worker nem o plugin em
+QuickJS podem levantar esse servidor.
 
-1. **Nao escrever o `SegmentList`, nao ir atras do `pot`.** Os dois estao
-   medidos e nenhum resolve.
-2. **Levar isto a quem faz o Nuvio.** O suporte a SABR e' trabalho de leitor, e
-   e' o mesmo trabalho para qualquer fonte do YouTube — nao e' especifico
-   destas series.
-3. **Enquanto isso, dizer a verdade na interface.** As entradas `Turcas PT`
-   tocam os primeiros ~50 s e depois morrem ao saltar. Marcar isso no titulo da
-   fonte e' menos mau do que deixar o utilizador descobrir a meio do episodio.
+### A saída: o tecto é só dos formatos adaptativos
 
-### Paliativo aplicado em 31-08-2026 — uma faixa por codec
+A varredura de itags feita de manhã cobriu 137, 248, 399, 136, 247, 398 e o
+audio — **todos adaptativos**. Nunca se sondou o formato progressivo, o ficheiro
+único com video e audio juntos que vem em `streamingData.formats` e não em
+`adaptiveFormats`.
 
-O manifesto levava **13 Representations**. O ExoPlayer troca de qualidade
-sozinho, e cada troca abre pedidos novos ao `googlevideo`.
+Sondado à tarde, aos 0 / 25 / 50 / 75 / 95 / 99 % do ficheiro, em sete episódios
+de cinco séries:
 
-- `plugin/turcas-pt.js`: `MAX_PER_CODEC` 6 → 1, `MAX_AUDIO` 2 → 1
-- `src/dash.js`: `MAX_REPRESENTATIONS` 12 → 2
+```
+NWSeGEjeuFw  Doğanın Kanunu 1. Bölüm   114min  itag 18  441MB  206 206 206 206 206 206
+wFZya9bOdVY  Doğanın Kanunu 2. Bölüm   122min  itag 18  455MB  206 206 206 206 206 206
+7kPLaR8GOlQ  Doğanın Kanunu 3. Bölüm   136min  itag 18  532MB  206 206 206 206 206 206
+5G-_BOyA1ZM  Tuzlu Kahve 1. Bölüm      122min  itag 18  152MB  206 206 206 206 206 206
+0fTJyCTwznM  Kuruluş Osman 1. Bölüm    142min  itag 18  280MB  206 206 206 206 206 206
+R6SzAfhCuuk  Arafta 1. Bölüm           147min  itag 18  556MB  206 206 206 206 206 206
+QvZHtdpkybc  Muhtemel Aşk 1. Bölüm     139min  itag 18  511MB  206 206 206 206 206 206
+```
 
-Custo: perde-se a adaptação à largura de banda. **Ainda não está publicado.**
-Fica, porque menos pedidos não faz mal — mas já se sabe que **não é isto que
-destranca o salto**: a fronteira é a mesma com um pedido ou com doze.
+**O tecto dos ~5,8 MB é dos endereços adaptativos, não do vídeo.** O progressivo
+serve qualquer intervalo, em qualquer posição, sem token nenhum.
+
+Custa qualidade: o itag 18 são 360p, e o 22 (720p) o YouTube já quase não
+publica. Mas o requisito era «andar para a frente ou para trás, mesmo que tenha
+de fazer buffer» — e 360p que salta vale mais do que 1080p que morre aos 50 s.
+
+### O que se fez com isto (31-08-2026)
+
+O plugin **já extraía** o formato progressivo — mas punha-o atrás, rotulado como
+reserva («ficheiro unico»), porque se julgava que só servia para o mpv do
+computador. Passou à frente, e os dois rótulos passaram a dizer a verdade:
+
+- `plugin/turcas-pt.js`: o progressivo é o primeiro resultado, com *(permite
+  avancar)* no título; o manifesto DASH fica atrás, com *(nao permite avancar)*.
+- `scripts/plugin-smoke.mjs`: ganhou `--local`, para se poder testar uma
+  alteração ao plugin **antes** de a publicar, e uma verificação de salto que
+  pede 25 %, 50 % e 95 % do ficheiro único e falha se algum não devolver `206`.
+
+O `MAX_PER_CODEC = 1` fica como está, mas o comentário deixou de dizer que é ele
+que destranca o salto — não é, e a fronteira é a mesma com uma faixa ou com doze.
+
+### O que fica por fazer
+
+1. **Publicar.** O plugin novo só chega à televisão com `wrangler deploy`.
+2. **Recuperar o 1080p com salto** exige suporte a SABR no leitor. É trabalho de
+   quem faz o Nuvio, e é o mesmo trabalho para qualquer fonte do YouTube — não é
+   específico destas séries. Enquanto não existir, a entrada de 1080p fica como
+   está e diz o que não faz.
 
 ### Protocolo para a próxima sonda — o que se aprendeu a medir
 
@@ -558,6 +606,7 @@ nada, e só se soube depois de os gastar.
 
 ### Também por fazer, e não é deste assunto
 
-O português europeu (regras no *prompt* + `src/translate/pt-pt.js`) está escrito,
-testado e **por publicar**. O `wrangler deploy` ficou travado pela permissão na
-sessão de 30-08-2026. Publicar e comparar o `tt43644041:1:1` antes e depois.
+O português europeu (regras no *prompt* + `src/translate/pt-pt.js`) está
+publicado e **verificado em produção** (31-08-2026): o `tt43644041:1:1` desce
+185 KB de legenda com `diga-nos`, `irá`, `actores`, e zero ocorrências das
+formas brasileiras procuradas.
