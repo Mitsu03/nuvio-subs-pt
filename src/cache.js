@@ -1,5 +1,7 @@
 /** Cache KV das legendas ja preparadas. */
 
+import { PT_STYLE_VERSION } from './translate/pt-pt.js';
+
 const PREFIX = 'sub:v1:';
 
 async function hashKey(value) {
@@ -16,8 +18,11 @@ export async function cacheKey(payload, env) {
 
   // O motor E o modelo entram na chave: trocar de modelo tem de dar uma legenda
   // nova, senao continuava a servir-se a traducao feita pelo modelo anterior.
+  // Pela mesma razao entra a versao das regras de portugues europeu: sem ela,
+  // uma legenda ja traduzida em brasileiro continuava a ser servida ate a cache
+  // expirar, e o utilizador nao tinha como forcar nova tentativa.
   const engine = payload.tr
-    ? `${env.TRANSLATE_PROVIDER || 'workersai'}:${env.WORKERSAI_MODEL || ''}`
+    ? `${env.TRANSLATE_PROVIDER || 'workersai'}:${env.WORKERSAI_MODEL || ''}:${PT_STYLE_VERSION}`
     : 'raw';
 
   return PREFIX + (await hashKey([urls, payload.lang, payload.src || '', engine].join('|')));

@@ -481,3 +481,84 @@ test('providers: o nome do ficheiro que bate certo com o episodio manda', () => 
   assert.ok(scoreCandidate(exact, video) > scoreCandidate(generic, video));
   assert.equal(rankCandidates([generic, exact], video)[0], exact);
 });
+
+test('portugues europeu: o gerundio com auxiliar passa a `a` + infinitivo', async () => {
+  const { toEuropeanPortuguese: pt } = await import('../src/translate/pt-pt.js');
+
+  assert.equal(pt('Ele esta fazendo o jantar.'), 'Ele esta a fazer o jantar.');
+  assert.equal(pt('Ela continua trabalhando.'), 'Ela continua a trabalhar.');
+  assert.equal(pt('Estava sendo dificil.'), 'Estava a ser dificil.');
+  assert.equal(pt('Estou indo para casa.'), 'Estou a ir para casa.');
+  assert.equal(pt('Ele estava vindo.'), 'Ele estava a vir.');
+
+  // Sem auxiliar o gerundio e' legitimo, e nao se toca.
+  assert.equal(pt('Correndo, chegou a tempo.'), 'Correndo, chegou a tempo.');
+  // `-ondo` fica de fora: dava «por» em vez de «pôr».
+  assert.equal(pt('Esta pondo a mesa.'), 'Esta pondo a mesa.');
+});
+
+test('portugues europeu: o pronome sai de entre o auxiliar e o infinitivo', async () => {
+  const { toEuropeanPortuguese: pt } = await import('../src/translate/pt-pt.js');
+
+  assert.equal(pt('Nao vou me intrometer.'), 'Nao me vou intrometer.');
+  assert.equal(pt('Nao posso te dizer isso.'), 'Nao te posso dizer isso.');
+  assert.equal(pt('Ja vou me embora.'), 'Ja me vou embora.');
+  assert.equal(pt('Nunca quis te magoar.'), 'Nunca te quis magoar.');
+
+  // Sem atractor a ordem ja e' a portuguesa, e mexer so estragava.
+  assert.equal(pt('Vou dizer-te uma coisa.'), 'Vou dizer-te uma coisa.');
+});
+
+test('portugues europeu: nenhuma frase comeca por pronome', async () => {
+  const { toEuropeanPortuguese: pt } = await import('../src/translate/pt-pt.js');
+
+  assert.equal(pt('Me desculpe.'), 'Desculpe-me.');
+  assert.equal(pt('Te amo muito.'), 'Amo-te muito.');
+  assert.equal(pt('Ele riu. Me disse tudo.'), 'Ele riu. Disse-me tudo.');
+
+  // `Nos` fica de fora: tambem e' a contraccao de «em os».
+  assert.equal(pt('Nos anos 90 era diferente.'), 'Nos anos 90 era diferente.');
+});
+
+test('portugues europeu: so se trocam palavras que nao mudam de genero', async () => {
+  const { toEuropeanPortuguese: pt } = await import('../src/translate/pt-pt.js');
+
+  assert.equal(pt('Tomou o cafe da manha no onibus.'), 'Tomou o cafe da manha no onibus.');
+  assert.equal(pt('Tomou o café da manhã no ônibus.'), 'Tomou o pequeno-almoço no autocarro.');
+  assert.equal(pt('O gênero econômico do bebê.'), 'O género económico do bebé.');
+  assert.equal(pt('Isto é para você.'), 'Isto é para ti.');
+
+  // Estas mudavam de genero e partiam a concordancia: «A frigorifico», «o equipa».
+  assert.equal(pt('A geladeira avariou.'), 'A geladeira avariou.');
+  assert.equal(pt('O time perdeu.'), 'O time perdeu.');
+  assert.equal(pt('Saiu do banheiro.'), 'Saiu do banheiro.');
+});
+
+test('portugues europeu: nao se aplica quando o utilizador pediu PT-BR', async () => {
+  const linhas = ['Nao vou me intrometer.'];
+  const env = {
+    TRANSLATE_PROVIDER: 'workersai',
+    AI: { run: async () => ({ response: '1. Nao vou me intrometer.' }) },
+  };
+
+  const brasil = await translateLines(linhas, { from: 'en', to: 'pt-BR' }, env);
+  assert.equal(brasil.lines[0], 'Nao vou me intrometer.');
+
+  const portugal = await translateLines(linhas, { from: 'en', to: 'pt' }, env);
+  assert.equal(portugal.lines[0], 'Nao me vou intrometer.');
+});
+
+test('cache: mudar as regras de portugues da uma chave diferente', async () => {
+  const { PT_STYLE_VERSION } = await import('../src/translate/pt-pt.js');
+  assert.ok(PT_STYLE_VERSION, 'a versao das regras tem de existir');
+
+  const payload = { urls: ['https://exemplo/a.srt'], lang: 'pt', src: 'en', tr: 1 };
+  const env = { TRANSLATE_PROVIDER: 'workersai', WORKERSAI_MODEL: 'm' };
+
+  // Uma legenda sem traducao nao depende das regras, e a chave nao pode mexer-se.
+  const crua = await cacheKey({ ...payload, tr: 0 }, env);
+  assert.equal(crua, await cacheKey({ ...payload, tr: 0 }, env));
+
+  // Com traducao, a versao entra na chave.
+  assert.notEqual(await cacheKey(payload, env), crua);
+});
