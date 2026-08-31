@@ -269,13 +269,24 @@ segundo megabyte.
 
 ---
 
-## 3. `403` a reproduzir e a saltar no vídeo — CAUSA MEDIDA, correção por arranjar
+## 3. `403` a reproduzir e a saltar no vídeo — CAUSA MEDIDA, e está fora deste addon
 
-Aberto em 31-08-2026 e medido no mesmo dia, do PC e da TV LG. A causa está
-identificada e **não é nenhuma das duas que o plano tinha previsto**: os
-endereços do `googlevideo` vêm sem *proof-of-origin token*, e sem ele o servidor
-entrega só os primeiros ~50 s do ficheiro. O paliativo das faixas já entrou e
-continua a valer, mas não resolve isto.
+Aberto em 31-08-2026 e medido no mesmo dia, do PC, da TV LG e do Firefox. A
+causa está identificada e **não é nenhuma das que o plano tinha previsto, nem a
+que este documento chegou a afirmar a meio**: não é o `Range`, não é o codec,
+não é o volume de pedidos, e não é falta de *proof-of-origin token*.
+
+É o protocolo. Os endereços por `itag` que o addon usa servem só os primeiros
+~50 s. O browser passa à frente disso por falar **SABR** — outro protocolo, que
+vem na mesma resposta do player que o plugin já recebe, e que nenhum manifesto
+DASH consegue exprimir.
+
+O paliativo das faixas já entrou e continua a valer, mas não resolve isto.
+
+Ordem de leitura: o sintoma, o que se eliminou, e depois as medições. As
+conclusões intermédias ficaram no documento de propósito — duas delas estavam
+erradas, e o que as derrubou foi sempre a mesma coisa: testar a premissa do
+ramo antes de o executar.
 
 ### O sintoma, medido na Shield
 
@@ -461,43 +472,69 @@ TVHTML5       —   UNPLAYABLE, 0 formatos (nem cifrados)
 Só o `ANDROID` e o `IOS` devolvem endereços directos, e ambos dão a mesma faixa
 com o mesmo limite. Os restantes nem chegam a entregar formatos.
 
-### A causa, e o que ela mata
+### A causa, medida no browser: e' o protocolo, nao a credencial
 
-Os endereços não trazem `n=` nem `pot=`. O que o `googlevideo` serve sem
-*proof-of-origin token* é exactamente isto: um prefixo curto do ficheiro, e
-`403` em tudo o resto. Tocar do início funciona porque os primeiros ~50 s cabem
-no prefixo; encher buffer para além disso, ou saltar para qualquer sítio depois
-disso, cai fora.
+A hipotese anterior — falta de *proof-of-origin token* — **esta' errada**, e foi
+o browser que a desmentiu. Reproduzido o mesmo video no Firefox, do mesmo IP:
 
-**Não é um defeito de `Range`, de codec, de segmentação, de cliente, nem de
-volume de pedidos.** É falta de credencial no endereço. Isso mata os três
-caminhos que este plano tinha previsto:
+```
+buffered: 0.0-54.2       <- o prefixo, ao tocar do inicio
+buffered: 599.6-644.6    <- depois de saltar para os 600 s
+pedidos ao googlevideo: 7   com sabr=1: 7   com itag: 0
+```
 
-| Caminho previsto | Porque morreu |
+O browser **salta sem problema nenhum** — e nao tem `pot` nenhum no endereco.
+O que tem e' outra coisa: todos os pedidos vao para `/videoplayback` com
+`sabr=1` e **sem `itag`**. Nao sao pedidos de intervalos de bytes; e' o
+protocolo SABR, com o pedido em POST e a resposta em UMP.
+
+O primeiro bloco que ele guarda, `0.0-54.2`, bate certo com a fronteira que
+tinhamos bisseccionado (51,6–53,2 s). Isso nao e' coincidencia: e' o mesmo
+limite, e o browser passa-lhe a` frente por mudar de protocolo, nao por
+apresentar credencial.
+
+### As duas portas vem na mesma resposta
+
+O `youtubei/v1/player` do cliente `ANDROID` — o que o plugin ja usa — devolve as
+duas coisas ao mesmo tempo:
+
+| | |
 |---|---|
-| passo 2 — `SegmentList` com `&range=` | o `&range=` dá `403` na mesma posição que o cabeçalho |
-| passo 3 — reserva em 360p | a faixa 360p é limitada na mesma (itag 243: 20–27 s, *pior*) |
-| paliativo — menos faixas | a fronteira é idêntica com um pedido ou com doze |
+| `adaptiveFormats` | 26 enderecos por `itag`, sem `n` e sem `pot` — **limitados ao prefixo** |
+| `serverAbrStreamingUrl` | `/videoplayback` com `sabr=1` — o caminho que o browser usa |
+| `videoPlaybackUstreamerConfig` | 1780 caracteres de configuracao que o SABR exige |
 
-### O que resta, e é uma coisa só
+Ou seja: o que falta nao esta' por arranjar em lado nenhum — ja vem na resposta
+que o plugin recebe hoje. O que falta e' saber falar o protocolo.
 
-**Arranjar um `pot`.** É o único caminho que ataca a causa medida. O que se sabe
-já, e limita as opções:
+### O que isso custa, e porque nao cabe onde o codigo esta' agora
 
-- O Worker não serve para o mintar: a Cloudflare proíbe `eval`, e o BotGuard
-  precisa de executar código dinâmico.
-- O plugin corre em QuickJS sem DOM, que também não chega para o BotGuard.
-- O `pot` prende-se ao `visitorData`, não ao IP — portanto quem o minta não tem
-  de ser quem descarrega. Isso abre a porta a mintá-lo noutro sítio e entregá-lo,
-  mas obriga a ter esse «outro sítio» algures.
+O SABR nao e' um endereco que se entregue a um leitor. E' um POST com um corpo
+em protobuf (posicao, formatos escolhidos, o que ja esta' em buffer) e uma
+resposta em UMP que tem de ser desmontada em segmentos antes de chegar ao
+descodificador.
 
-Por decidir antes de escrever código: onde é que o BotGuard corre.
+Isso quer dizer que **nao ha manifesto DASH que exprima isto**. O ExoPlayer e o
+leitor da TV pedem intervalos de bytes; o SABR nao os serve. Entre um e outro
+teria de existir algo que fale SABR para cima e sirva bytes para baixo — e esse
+algo tem de correr no IP de casa, portanto nao pode ser o Worker.
 
-### Fica por medir, e já não bloqueia nada
+O plugin tambem nao serve como esta': corre em QuickJS, devolve um URL ao
+leitor, e nao pode levantar um servidor local para o alimentar.
 
-Se a fronteira é em tempo, em bytes ou em fracção do ficheiro. As três leituras
-dão números próximos e nenhuma delas muda a correcção — todas as faixas ficam
-inutilizáveis para saltar. Registado por honestidade, não por ser preciso.
+**A conclusao honesta e' que isto nao se resolve dentro deste addon.** Resolve-se
+na aplicacao — quem tem o leitor tem de saber pedir SABR — ou nao se resolve.
+
+### O que fazer com isto
+
+1. **Nao escrever o `SegmentList`, nao ir atras do `pot`.** Os dois estao
+   medidos e nenhum resolve.
+2. **Levar isto a quem faz o Nuvio.** O suporte a SABR e' trabalho de leitor, e
+   e' o mesmo trabalho para qualquer fonte do YouTube — nao e' especifico
+   destas series.
+3. **Enquanto isso, dizer a verdade na interface.** As entradas `Turcas PT`
+   tocam os primeiros ~50 s e depois morrem ao saltar. Marcar isso no titulo da
+   fonte e' menos mau do que deixar o utilizador descobrir a meio do episodio.
 
 ### Paliativo aplicado em 31-08-2026 — uma faixa por codec
 
