@@ -34,9 +34,11 @@ var BROWSER_UA =
  * Quantas faixas de cada codec enviar.
  *
  * Era 6 e 2, para o leitor poder adaptar a` largura de banda. Passou a uma e
- * uma: cada qualidade a mais e' uma troca que o leitor faz sozinho, e cada
- * troca sao pedidos novos ao googlevideo, que limita por IP. Medido na Shield,
- * com doze faixas no manifesto: tocar do inicio funciona, saltar da' `403`.
+ * uma para reduzir pedidos ao googlevideo. Fica assim porque menos pedidos nao
+ * faz mal, mas que se saiba: **nao e' isto que destranca o salto**. A fronteira
+ * do `403` e' a mesma com uma faixa ou com doze -- e' um tecto por posicao no
+ * ficheiro (~5,8 MB), nao por volume de pedidos. Quem salta e' o ficheiro
+ * unico, mais abaixo.
  *
  * Com uma faixa so, uma ligacao fraca espera em vez de baixar de qualidade.
  */
@@ -282,12 +284,12 @@ function splitFormats(data) {
     return (b.bitrate || 0) - (a.bitrate || 0);
   });
 
-  // Ficheiro unico, video e audio juntos. Nao depende do manifesto nem do
-  // Worker, e no computador e' a unica coisa que toca: o mpv que o Nuvio usa
-  // no ambiente de trabalho nao traz o leitor de DASH, e os enderecos das
-  // faixas separadas so respondem a pedidos com um intervalo de bytes fechado.
-  // Por isso vale a pena escolher o melhor e nao o primeiro: quando o YouTube
-  // ainda publica o itag 22 sao 720p em vez de 360p.
+  // Ficheiro unico, video e audio juntos (itag 18, e itag 22 quando existe).
+  // Nao depende do manifesto nem do Worker, e e' a unica faixa que serve
+  // intervalos de bytes em qualquer posicao -- as adaptativas param nos ~5,8 MB.
+  // Tambem e' a unica que toca no computador, onde o mpv do Nuvio nao traz
+  // leitor de DASH. Vale a pena escolher o melhor e nao o primeiro: quando o
+  // YouTube ainda publica o itag 22 sao 720p em vez de 360p.
   var progressive = null;
   var plain = streaming.formats || [];
   for (var j = 0; j < plain.length; j += 1) {
@@ -355,6 +357,25 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
     await sendCaptions(tmdbId, isSeries, season, episode, data);
 
+    // O ficheiro unico vai a` frente, e nao e' reserva nenhuma: e' o unico que
+    // deixa saltar. Os enderecos das faixas adaptativas so servem os primeiros
+    // ~5,8 MB e devolvem `403` a qualquer intervalo depois disso -- medido em
+    // 31-08-2026, aos 0/25/50/75/95/99% de sete episodios de cinco series, o
+    // progressivo respondeu `206` em todos e o adaptativo `403` em todos menos
+    // no arranque. Ver PLANO.md, seccao 3.
+    if (formats.progressive) {
+      results.push({
+        name: 'Turcas PT',
+        title: video.title + ' - audio turco original (permite avancar)',
+        url: formats.progressive.url,
+        quality: (formats.progressive.height || 360) + 'p',
+        headers: { 'User-Agent': ANDROID.userAgent },
+      });
+    }
+
+    // O manifesto DASH fica atras e com o aviso no titulo. Tem mais qualidade,
+    // mas morre no primeiro salto -- e' melhor dize-lo do que deixar o
+    // utilizador descobri-lo a meio do episodio.
     if (formats.video.length > 0 && formats.audio.length > 0) {
       var url = await manifestUrl(formats, duration);
       if (url) {
@@ -364,23 +385,11 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         }
         results.push({
           name: 'Turcas PT',
-          title: video.title + ' - audio turco original',
+          title: video.title + ' - audio turco original (nao permite avancar)',
           url: url,
           quality: height >= 2160 ? '4K' : height + 'p',
         });
       }
-    }
-
-    // A reserva vai sempre atras. So fica sozinha quando o manifesto falha, e
-    // nesse caso 360p e' melhor do que nada.
-    if (formats.progressive) {
-      results.push({
-        name: 'Turcas PT',
-        title: video.title + ' - audio turco original (ficheiro unico)',
-        url: formats.progressive.url,
-        quality: (formats.progressive.height || 360) + 'p',
-        headers: { 'User-Agent': ANDROID.userAgent },
-      });
     }
 
     log('devolvi ' + results.length + ' streams');

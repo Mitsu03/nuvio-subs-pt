@@ -341,9 +341,21 @@ O `avc1` 1080p vai no mesmo manifesto: se a televisão não descodificar `vp9`, 
 leitor cai lá sozinho. O `av01` fica de fora — dava o mesmo 4K e muitas
 televisões ainda não o descodificam por hardware.
 
-Fica ainda uma segunda entrada com o ficheiro único de 360p. Nunca é a
-escolhida por gosto: só aparece sozinha quando o manifesto falha, e nesse caso
-360p é melhor do que nada.
+### Qual das duas entradas vem à frente, e porquê
+
+À frente vai o **ficheiro único de 360p**, com *(permite avancar)* no título. O
+manifesto DASH fica atrás, com *(nao permite avancar)*.
+
+Parece ao contrário e não é. Os endereços das faixas adaptativas servem só os
+primeiros **~5,8 MB** e devolvem `403` a qualquer intervalo depois disso — quem
+toca do início vê ~50 s e depois não consegue saltar. Medido em 31-08-2026 aos
+0/25/50/75/95/99 % de sete episódios de cinco séries: o progressivo respondeu
+`206` em todos, o adaptativo `403` em todos menos no arranque.
+
+Recuperar o 1080p com salto exige suporte a **SABR** no leitor, que é o
+protocolo que o browser usa e que nenhum manifesto DASH exprime. Isso é trabalho
+do lado do NuvioTV. Até lá, as duas entradas ficam ambas disponíveis e cada uma
+diz o que faz. Detalhe completo das medições em [PLANO.md](PLANO.md), secção 3.
 
 ### O que o Worker aceita
 
