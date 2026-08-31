@@ -7,9 +7,20 @@
  *
  * E' o mais perto que se chega de testar isto sem uma televisao a' frente.
  */
-const ORIGIN = 'https://nuvio-subs-pt.mitsukuri.workers.dev';
+const ORIGIN = process.env.SMOKE_ORIGIN || 'https://nuvio-subs-pt.mitsukuri.workers.dev';
 
-const code = await (await fetch(ORIGIN + '/plugin/turcas-pt.js')).text();
+// `--local` corre o `plugin/turcas-pt.js` desta arvore em vez do que esta'
+// publicado. Sem isto uma alteracao ao plugin so se consegue testar depois de
+// a publicar, que e' exactamente a ordem errada.
+const local = process.argv.includes('--local');
+const code = local
+  ? (await import('node:fs')).readFileSync(
+      new URL('../plugin/turcas-pt.js', import.meta.url),
+      'utf8',
+    ).replace('__WORKER_ORIGIN__', ORIGIN)
+  : await (await fetch(ORIGIN + '/plugin/turcas-pt.js')).text();
+
+console.log(local ? `fonte: plugin/turcas-pt.js (local), Worker em ${ORIGIN}` : `fonte: ${ORIGIN}/plugin/turcas-pt.js (publicado)`);
 const module_ = { exports: {} };
 const wrapped = new Function('module', 'exports', 'console', 'fetch', code);
 wrapped(module_, module_.exports, console, fetch);
@@ -25,6 +36,27 @@ for (const [label, id, type, season, episode] of cases) {
   const streams = await module_.exports.getStreams(id, type, season, episode);
   console.log(`\n### ${label} -> ${streams.length} streams (${Date.now() - started}ms)`);
   for (const s of streams) console.log(`    [${s.quality}] ${s.title}\n        ${s.url.slice(0, 78)}...`);
+
+  // O que interessa no ficheiro unico nao e' tocar, e' saltar: pede-se um
+  // intervalo la' para o fim. As faixas adaptativas devolvem `403` a partir dos
+  // ~5,8 MB, e foi esse o defeito que se andou meses a perseguir.
+  const single = streams.find((s) => !s.url.includes('/dash/'));
+  if (single) {
+    const head = await fetch(single.url, { headers: { ...(single.headers || {}), Range: 'bytes=0-1' } });
+    const total = Number((head.headers.get('content-range') || '').split('/')[1] || 0);
+    await head.arrayBuffer();
+    const marks = [0.25, 0.5, 0.95];
+    const out = [];
+    for (const pct of marks) {
+      const off = Math.floor(total * pct);
+      const r = await fetch(single.url, { headers: { ...(single.headers || {}), Range: `bytes=${off}-${off + 200000}` } });
+      await r.arrayBuffer();
+      out.push(`${Math.round(pct * 100)}%:${r.status}`);
+    }
+    const ok = out.every((m) => m.endsWith(':206'));
+    console.log(`    ficheiro unico: ${(total / 1048576).toFixed(0)} MB, saltos ${out.join(' ')} ${ok ? 'OK' : 'FALHOU'}`);
+    if (!ok) process.exitCode = 1;
+  }
 
   const dash = streams.find((s) => s.url.includes('/dash/'));
   if (!dash) continue;
